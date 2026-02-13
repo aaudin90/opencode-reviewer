@@ -19,6 +19,16 @@ func NewClient(dir, remote string) *Client {
 	return &Client{dir: dir, remote: remote}
 }
 
+// Validate checks that the client directory is a valid git repository.
+func (c *Client) Validate() error {
+	_, err := c.run("rev-parse", "--git-dir")
+	if err != nil {
+		return fmt.Errorf("git validate: %w", err)
+	}
+
+	return nil
+}
+
 // Diff returns the diff between base and head branches.
 func (c *Client) Diff(base, head string) (string, error) {
 	out, err := c.run("diff", fmt.Sprintf("%s/%s...%s/%s", c.remote, base, c.remote, head))
@@ -69,8 +79,31 @@ func (c *Client) Log(base, head string) (string, error) {
 	return out, nil
 }
 
+// Checkout switches to the specified branch.
+func (c *Client) Checkout(branch string) error {
+	_, err := c.run("checkout", branch)
+	if err != nil {
+		return fmt.Errorf("git checkout: %w", err)
+	}
+
+	return nil
+}
+
+// Clean resets tracked files and removes untracked files and directories.
+func (c *Client) Clean() error {
+	if _, err := c.run("checkout", "."); err != nil {
+		return fmt.Errorf("git checkout .: %w", err)
+	}
+
+	if _, err := c.run("clean", "-fd"); err != nil {
+		return fmt.Errorf("git clean: %w", err)
+	}
+
+	return nil
+}
+
 func (c *Client) run(args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
+	cmd := exec.Command("git", args...) // #nosec G204 -- args are constructed internally, not from user input
 	cmd.Dir = c.dir
 
 	var stdout, stderr bytes.Buffer
