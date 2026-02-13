@@ -25,9 +25,15 @@ The numeric ID corresponds to the task identifier.
 - `make build` — build binary
 - `make run` — run with dev config
 - `make test` — run tests with race detector
-- `make linter` — run gofmt + golangci-lint
+- `make linter` — run gofmt + golangci-lint + govulncheck + staticcheck + gosec
 - `make deps` — go mod tidy
 - `make dev-config` — create configs/dev.toml from example
+
+## After Code Changes
+
+After modifying code, always run:
+1. `make test` — tests must pass
+2. `make linter` — fix all reported issues (govulncheck, staticcheck, gosec included)
 
 ## Agent Docs
 

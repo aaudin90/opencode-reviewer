@@ -1,34 +1,38 @@
+version: "2"
+
 linters:
   enable:
     - errcheck
     - govet
     - staticcheck
     - unused
-    - gosimple
     - ineffassign
-    - typecheck
-    - gofmt
-    - goimports
     - revive
     - misspell
     - unconvert
     - unparam
     - nakedret
+  settings:
+    revive:
+      rules:
+        - name: exported
+          disabled: true
+    nakedret:
+      max-func-lines: 30
+  exclusions:
+    presets:
+      - std-error-handling
+    max-issues-per-linter: 0
+    max-same-issues: 0
 
-linters-settings:
-  goimports:
-    local-prefixes: github.com/aaudin90
-  revive:
-    rules:
-      - name: exported
-        disabled: true
-  nakedret:
-    max-func-lines: 30
-
-issues:
-  exclude-use-default: false
-  max-issues-per-linter: 0
-  max-same-issues: 0
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/aaudin90
 
 run:
   timeout: 5m

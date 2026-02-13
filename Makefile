@@ -22,12 +22,16 @@ test:
 linter:
 	@test -z "$$(gofmt -l .)" || (echo "gofmt issues" && exit 1)
 	@-golangci-lint run -c ./golangci.yml ./...
+	@-go tool govulncheck ./...
+	@-go tool staticcheck ./...
+	@-go tool gosec ./...
 
 tools:
+	@GOPROXY=https://proxy.golang.org,direct go mod tidy
 	@go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 
 deps:
-	@go mod tidy
+	@GOPROXY=https://proxy.golang.org,direct go mod tidy
 
 clean:
 	@rm -rf $(BUILD_DIR)
