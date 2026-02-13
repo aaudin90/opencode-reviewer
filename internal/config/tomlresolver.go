@@ -12,7 +12,7 @@ import (
 
 // NewTOMLResolver creates a kong.Resolver that reads values from a TOML file.
 func NewTOMLResolver(path string) (kong.Resolver, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- path from CLI flag, not user input
 	if err != nil {
 		return nil, fmt.Errorf("read toml config: %w", err)
 	}
