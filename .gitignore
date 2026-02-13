@@ -1,0 +1,12 @@
+.idea
+.DS_Store
+.vscode
+/build/
+/reviewer
+review-report.md
+*.log
+AGENTS.md.reviewer-backup
+*.toml
+*.env
+!configs/example.toml
+.coverage

@@ -1,0 +1,12 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="reviewer debug" type="GoApplicationRunConfiguration" factoryName="Go Application">
+    <module name="opencode-reviewer" />
+    <working_directory value="$PROJECT_DIR$" />
+    <parameters value="--config=./configs/dev.toml --branch=main" />
+    <kind value="DIRECTORY" />
+    <package value="github.com/aaudin90/opencode-reviewer" />
+    <directory value="$PROJECT_DIR$/cmd/reviewer" />
+    <filePath value="$PROJECT_DIR$" />
+    <method v="2" />
+  </configuration>
+</component>

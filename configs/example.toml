@@ -1,0 +1,16 @@
+[opencode]
+  endpoint = "http://localhost:4096"
+  port = 4096
+  model = "anthropic/claude-sonnet-4-20250514"
+  binary = "opencode"
+  stage_timeout = 600
+
+[git]
+  project_dir = "."
+  remote = "origin"
+  branch = ""
+  base_branch = "main"
+
+[output]
+  file_path = "review-report.md"
+  format_project_dir = ""

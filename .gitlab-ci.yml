@@ -1,0 +1,32 @@
+stages:
+  - test
+  - build
+
+unit-tests:
+  stage: test
+  image: golang:1.25
+  variables:
+    CGO_ENABLED: "1"
+  script:
+    - go test -short -race -v -coverprofile=coverage.out ./...
+  coverage: '/total:\s+\(statements\)\s+(\d+\.\d+)%/'
+  artifacts:
+    paths:
+      - coverage.out
+    expire_in: 1 week
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+build-image:
+  stage: build
+  image:
+    name: gcr.io/kaniko-project/executor:debug
+    entrypoint: [""]
+  script:
+    - /kaniko/executor
+      --context $CI_PROJECT_DIR
+      --dockerfile $CI_PROJECT_DIR/images/Dockerfile
+      --no-push
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
