@@ -29,12 +29,12 @@ type GitConfig struct {
 }
 
 type OutputConfig struct {
-	FilePath        string `toml:"file_path"`
+	FilePath         string `toml:"file_path"`
 	FormatProjectDir string `toml:"format_project_dir"`
 }
 
 func Load(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- path from CLI flag, not user input
 	if err != nil {
 		return nil, fmt.Errorf("read config %s: %w", path, err)
 	}
