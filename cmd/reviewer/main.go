@@ -95,7 +95,7 @@ func run(cfg *config.Config) error {
 	)
 
 	gitClient := git.NewClient(projectDir, cfg.Git.Remote)
-	p := pipeline.New(gitClient, cfg.Git.Branch)
+	p := pipeline.New(gitClient, cfg.Git.Branch, cfg.Git.BaseBranch)
 
 	return p.Run()
 }
