@@ -7,6 +7,9 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
+// ReviewDir is the subdirectory inside the project for temporary review files.
+const ReviewDir = ".opencode-review"
+
 type Config struct {
 	OpenCode OpenCodeConfig `toml:"opencode"`
 	Git      GitConfig      `toml:"git"`
