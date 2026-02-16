@@ -19,6 +19,11 @@ func NewClient(dir, remote string) *Client {
 	return &Client{dir: dir, remote: remote}
 }
 
+// Dir returns the working directory of the git client.
+func (c *Client) Dir() string {
+	return c.dir
+}
+
 // Validate checks that the client directory is a valid git repository.
 func (c *Client) Validate() error {
 	_, err := c.run("rev-parse", "--git-dir")
@@ -59,6 +64,28 @@ func (c *Client) DiffFiles(base, head string) ([]string, error) {
 	return files, nil
 }
 
+// DiffForReview returns the diff with extended context suitable for code review.
+func (c *Client) DiffForReview(base, head string) (string, error) {
+	out, err := c.run("diff", "-U6", "--no-color", "--find-renames",
+		fmt.Sprintf("%s/%s...%s/%s", c.remote, base, c.remote, head))
+	if err != nil {
+		return "", fmt.Errorf("git diff for review: %w", err)
+	}
+
+	return out, nil
+}
+
+// DiffStat returns the diffstat summary between base and head branches.
+func (c *Client) DiffStat(base, head string) (string, error) {
+	out, err := c.run("diff", "--stat",
+		fmt.Sprintf("%s/%s...%s/%s", c.remote, base, c.remote, head))
+	if err != nil {
+		return "", fmt.Errorf("git diff stat: %w", err)
+	}
+
+	return out, nil
+}
+
 // Fetch fetches the remote.
 func (c *Client) Fetch() error {
 	_, err := c.run("fetch", c.remote)
@@ -69,9 +96,9 @@ func (c *Client) Fetch() error {
 	return nil
 }
 
-// Log returns commit log between base and head.
+// Log returns commit log for head that is not in base (two-dot range).
 func (c *Client) Log(base, head string) (string, error) {
-	out, err := c.run("log", "--oneline", fmt.Sprintf("%s/%s...%s/%s", c.remote, base, c.remote, head))
+	out, err := c.run("log", "--oneline", fmt.Sprintf("%s/%s..%s/%s", c.remote, base, c.remote, head))
 	if err != nil {
 		return "", fmt.Errorf("git log: %w", err)
 	}
@@ -89,8 +116,12 @@ func (c *Client) Checkout(branch string) error {
 	return nil
 }
 
-// Clean resets tracked files and removes untracked files and directories.
+// Clean unstages all changes, resets tracked files and removes untracked files.
 func (c *Client) Clean() error {
+	if _, err := c.run("reset", "HEAD"); err != nil {
+		return fmt.Errorf("git reset: %w", err)
+	}
+
 	if _, err := c.run("checkout", "."); err != nil {
 		return fmt.Errorf("git checkout .: %w", err)
 	}

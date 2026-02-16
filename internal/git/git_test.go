@@ -114,6 +114,16 @@ func TestCheckout_NonExistent(t *testing.T) {
 func TestClean(t *testing.T) {
 	client, workDir := setupRepo(t)
 
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = workDir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, out)
+		}
+	}
+
 	// Modify tracked file.
 	initFile := filepath.Join(workDir, "init.txt")
 	if err := os.WriteFile(initFile, []byte("modified\n"), 0o644); err != nil {
@@ -125,6 +135,13 @@ func TestClean(t *testing.T) {
 	if err := os.WriteFile(untrackedFile, []byte("untracked\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+
+	// Create a staged (git add) new file — this is the key case.
+	stagedFile := filepath.Join(workDir, "staged.txt")
+	if err := os.WriteFile(stagedFile, []byte("staged\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "staged.txt")
 
 	if err := client.Clean(); err != nil {
 		t.Fatalf("Clean() returned error: %v", err)
@@ -142,6 +159,11 @@ func TestClean(t *testing.T) {
 	// Untracked file should be removed.
 	if _, err := os.Stat(untrackedFile); !os.IsNotExist(err) {
 		t.Fatal("expected untracked file to be removed")
+	}
+
+	// Staged file should be removed.
+	if _, err := os.Stat(stagedFile); !os.IsNotExist(err) {
+		t.Fatal("expected staged file to be removed after Clean()")
 	}
 }
 
@@ -232,6 +254,82 @@ func TestDiffFiles(t *testing.T) {
 	}
 }
 
+func TestDiffForReview(t *testing.T) {
+	client, workDir := setupRepo(t)
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = workDir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, out)
+		}
+	}
+
+	run("checkout", "-b", "review-branch")
+	if err := os.WriteFile(filepath.Join(workDir, "review.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "review.go")
+	run("commit", "-m", "add review.go")
+	run("push", "origin", "review-branch")
+	run("checkout", "main")
+
+	if err := client.Fetch(); err != nil {
+		t.Fatalf("Fetch() error: %v", err)
+	}
+
+	diff, err := client.DiffForReview("main", "review-branch")
+	if err != nil {
+		t.Fatalf("DiffForReview() returned error: %v", err)
+	}
+	if diff == "" {
+		t.Fatal("DiffForReview() returned empty string")
+	}
+	if !strings.Contains(diff, "review.go") {
+		t.Fatalf("DiffForReview() output does not mention review.go: %s", diff)
+	}
+}
+
+func TestDiffStat(t *testing.T) {
+	client, workDir := setupRepo(t)
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = workDir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, out)
+		}
+	}
+
+	run("checkout", "-b", "stat-branch")
+	if err := os.WriteFile(filepath.Join(workDir, "stat.txt"), []byte("stats\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "stat.txt")
+	run("commit", "-m", "add stat.txt")
+	run("push", "origin", "stat-branch")
+	run("checkout", "main")
+
+	if err := client.Fetch(); err != nil {
+		t.Fatalf("Fetch() error: %v", err)
+	}
+
+	stat, err := client.DiffStat("main", "stat-branch")
+	if err != nil {
+		t.Fatalf("DiffStat() returned error: %v", err)
+	}
+	if stat == "" {
+		t.Fatal("DiffStat() returned empty string")
+	}
+	if !strings.Contains(stat, "stat.txt") {
+		t.Fatalf("DiffStat() output does not mention stat.txt: %s", stat)
+	}
+}
+
 func TestLog(t *testing.T) {
 	client, workDir := setupRepo(t)
 
@@ -295,6 +393,12 @@ func TestInvalidDir(t *testing.T) {
 	}
 	if _, err := client.DiffFiles("main", "dev"); err == nil {
 		t.Error("DiffFiles() expected error for invalid dir")
+	}
+	if _, err := client.DiffForReview("main", "dev"); err == nil {
+		t.Error("DiffForReview() expected error for invalid dir")
+	}
+	if _, err := client.DiffStat("main", "dev"); err == nil {
+		t.Error("DiffStat() expected error for invalid dir")
 	}
 	if _, err := client.Log("main", "dev"); err == nil {
 		t.Error("Log() expected error for invalid dir")
