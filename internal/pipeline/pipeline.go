@@ -4,21 +4,24 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/aaudin90/opencode-reviewer/internal/agentsmd"
 	"github.com/aaudin90/opencode-reviewer/internal/diff"
 	"github.com/aaudin90/opencode-reviewer/internal/git"
 )
 
 type Pipeline struct {
-	gitClient  *git.Client
-	branch     string
-	baseBranch string
+	gitClient       *git.Client
+	branch          string
+	baseBranch      string
+	agentsMDContent string
 }
 
-func New(gitClient *git.Client, branch, baseBranch string) *Pipeline {
+func New(gitClient *git.Client, branch, baseBranch, agentsMDContent string) *Pipeline {
 	return &Pipeline{
-		gitClient:  gitClient,
-		branch:     branch,
-		baseBranch: baseBranch,
+		gitClient:       gitClient,
+		branch:          branch,
+		baseBranch:      baseBranch,
+		agentsMDContent: agentsMDContent,
 	}
 }
 
@@ -29,12 +32,28 @@ func (p *Pipeline) Run() error {
 
 	slog.Info("repository prepared for review")
 
+	// defer clean right after prepareBranch to ensure cleanup
+	// even if prepareDiff or Swap fails
+	defer func() {
+		if cleanErr := p.gitClient.Clean(); cleanErr != nil {
+			slog.Error("failed to clean working tree", "error", cleanErr)
+		}
+	}()
+
 	diffPath, err := p.prepareDiff()
 	if err != nil {
 		return fmt.Errorf("prepare diff: %w", err)
 	}
 
 	slog.Info("diff context ready", "path", diffPath)
+
+	swapper := agentsmd.NewSwapper(p.gitClient.Dir())
+	swapped, err := swapper.Swap(p.agentsMDContent)
+	if err != nil {
+		return fmt.Errorf("swap agents.md: %w", err)
+	}
+
+	slog.Info("AGENTS.md swapped for review", "removed", swapped)
 
 	return nil
 }

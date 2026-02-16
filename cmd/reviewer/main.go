@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/alecthomas/kong"
 
@@ -40,12 +41,16 @@ Config file (TOML) sections:
     branch          Branch to review
     base_branch     Base branch for diff (default: main)
 
+  [pipeline]
+    agents_md_content   AGENTS.md content for review mode (required)
+
   [output]
     file_path         Report output path (default: review-report.md)
     format_project_dir  Project dir for path formatting
 
 Environment variables:
-  REVIEW_BRANCH   Branch to review (overridden by --branch flag)`),
+  REVIEW_BRANCH     Branch to review (overridden by --branch flag)
+  AGENTS_MD_PATH    Path to AGENTS.md template file (overrides agents_md_content)`),
 	)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -76,6 +81,21 @@ Environment variables:
 		os.Exit(1)
 	}
 
+	if envPath := os.Getenv("AGENTS_MD_PATH"); envPath != "" {
+		cleanPath := filepath.Clean(envPath)
+		data, readErr := os.ReadFile(cleanPath) // #nosec G304 G703 -- path from trusted env var
+		if readErr != nil {
+			slog.Error("failed to read AGENTS_MD_PATH", "error", readErr)
+			os.Exit(1)
+		}
+		cfg.Pipeline.AgentsMDContent = string(data)
+	}
+
+	if strings.TrimSpace(cfg.Pipeline.AgentsMDContent) == "" {
+		slog.Error("agents_md_content is required: set in config or via AGENTS_MD_PATH env")
+		os.Exit(1)
+	}
+
 	if err := run(cfg); err != nil {
 		slog.Error("review failed", "error", err)
 		os.Exit(1)
@@ -95,7 +115,7 @@ func run(cfg *config.Config) error {
 	)
 
 	gitClient := git.NewClient(projectDir, cfg.Git.Remote)
-	p := pipeline.New(gitClient, cfg.Git.Branch, cfg.Git.BaseBranch)
+	p := pipeline.New(gitClient, cfg.Git.Branch, cfg.Git.BaseBranch, cfg.Pipeline.AgentsMDContent)
 
 	return p.Run()
 }

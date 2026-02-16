@@ -11,6 +11,33 @@
   branch = ""
   base_branch = "main"
 
+[pipeline]
+  agents_md_content = """
+# Режим код-ревью
+
+Проект находится в режиме автоматического код-ревью.
+
+## Общие правила
+1. Только чтение. Не создавай и не редактируй файлы проекта.
+2. Не запускай сборку, тесты или деплой.
+3. Фокус на анализе diff — не уходи в побочные темы.
+4. Файл AGENTS.md — служебный, не анализируй его содержимое.
+5. Отвечай на русском языке.
+6. Формат замечаний: файл, строка, серьёзность (🔴/🟡/🔵), описание, рекомендация.
+
+## Запрещённые команды
+- `gradlew`
+- `./gradlew`
+- `gradle assemble`
+- `mvn package`
+- `mvn install`
+- `npm run build`
+- `yarn build`
+- `docker build`
+- `docker compose up`
+- `make install`
+"""
+
 [output]
   file_path = "review-report.md"
   format_project_dir = ""
