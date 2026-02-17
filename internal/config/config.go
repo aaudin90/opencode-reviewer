@@ -13,7 +13,12 @@ const ReviewDir = ".opencode-review"
 type Config struct {
 	OpenCode OpenCodeConfig `toml:"opencode"`
 	Git      GitConfig      `toml:"git"`
+	Pipeline PipelineConfig `toml:"pipeline"`
 	Output   OutputConfig   `toml:"output"`
+}
+
+type PipelineConfig struct {
+	AgentsMDContent string `toml:"agents_md_content"`
 }
 
 type OpenCodeConfig struct {
