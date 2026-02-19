@@ -1,0 +1,34 @@
+{
+  "provider": {
+    "llm-proxy": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "VK LLM Proxy",
+      "options": {
+        "baseURL": "https://llm-proxy.vkteam.ru/v1",
+        "apiKey": "{env:LLM_PROXY_API_KEY}",
+        "headers": {
+          "Authorization": "Bearer {env:LLM_PROXY_API_KEY}",
+          "Plugin-Type": "opencode"
+        }
+      },
+      "models": {
+        "kimi-k2.5": {
+          "name": "kimi-k2.5",
+          "cost": {
+            "input": 0.60,
+            "output": 3.00,
+            "cacheRead": 0.10
+          },
+          "limit": {
+            "context": 130000,
+            "output": 16000
+          },
+          "interleaved": {
+            "field": "reasoning_content"
+          }
+        }
+      }
+    }
+  },
+  "model": "llm-proxy/kimi-k2.5"
+}

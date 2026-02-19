@@ -11,34 +11,12 @@ import (
 const ReviewDir = ".opencode-review"
 
 type Config struct {
-	OpenCode OpenCodeConfig `toml:"opencode"`
-	Git      GitConfig      `toml:"git"`
-	Pipeline PipelineConfig `toml:"pipeline"`
-	Output   OutputConfig   `toml:"output"`
-}
-
-type PipelineConfig struct {
-	AgentsMDContent string `toml:"agents_md_content"`
-}
-
-type OpenCodeConfig struct {
-	Endpoint     string `toml:"endpoint"`
-	Port         int    `toml:"port"`
-	Model        string `toml:"model"`
-	Binary       string `toml:"binary"`
-	StageTimeout int    `toml:"stage_timeout"`
-}
-
-type GitConfig struct {
-	ProjectDir string `toml:"project_dir"`
-	Remote     string `toml:"remote"`
-	Branch     string `toml:"branch"`
-	BaseBranch string `toml:"base_branch"`
-}
-
-type OutputConfig struct {
-	FilePath         string `toml:"file_path"`
-	FormatProjectDir string `toml:"format_project_dir"`
+	ProjectDir string            `toml:"project_dir"`
+	Env        map[string]string `toml:"env"`
+	OpenCode   OpenCodeConfig    `toml:"opencode"`
+	Git        GitConfig         `toml:"git"`
+	Pipeline   PipelineConfig    `toml:"pipeline"`
+	Output     OutputConfig      `toml:"output"`
 }
 
 func Load(path string) (*Config, error) {

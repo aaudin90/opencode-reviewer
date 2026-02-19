@@ -1,33 +1,47 @@
 package pipeline
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
+	"os"
 
 	"github.com/aaudin90/opencode-reviewer/internal/agentsmd"
 	"github.com/aaudin90/opencode-reviewer/internal/diff"
 	"github.com/aaudin90/opencode-reviewer/internal/git"
+	"github.com/aaudin90/opencode-reviewer/internal/models"
+	"github.com/aaudin90/opencode-reviewer/internal/review"
+	"github.com/aaudin90/opencode-reviewer/internal/runner"
 )
 
+const reviewPrompt = "Прочитай diff из файла .opencode-review/diff.md и выполни код-ревью."
+
 type Pipeline struct {
-	gitClient       *git.Client
-	branch          string
-	baseBranch      string
-	agentsMDContent string
+	gitClient  *git.Client
+	branch     string
+	baseBranch string
+	runner     *runner.Runner
+	outputPath string
 }
 
-func New(gitClient *git.Client, branch, baseBranch, agentsMDContent string) *Pipeline {
+func New(
+	gitClient *git.Client,
+	branch, baseBranch string,
+	r *runner.Runner,
+	outputPath string,
+) *Pipeline {
 	return &Pipeline{
-		gitClient:       gitClient,
-		branch:          branch,
-		baseBranch:      baseBranch,
-		agentsMDContent: agentsMDContent,
+		gitClient:  gitClient,
+		branch:     branch,
+		baseBranch: baseBranch,
+		runner:     r,
+		outputPath: outputPath,
 	}
 }
 
-func (p *Pipeline) Run() error {
+func (p *Pipeline) Run(ctx context.Context) (*models.ReviewResult, error) {
 	if err := p.prepareBranch(); err != nil {
-		return fmt.Errorf("prepare branch: %w", err)
+		return nil, fmt.Errorf("prepare branch: %w", err)
 	}
 
 	slog.Info("repository prepared for review")
@@ -42,20 +56,54 @@ func (p *Pipeline) Run() error {
 
 	diffPath, err := p.prepareDiff()
 	if err != nil {
-		return fmt.Errorf("prepare diff: %w", err)
+		return nil, fmt.Errorf("prepare diff: %w", err)
 	}
 
 	slog.Info("diff context ready", "path", diffPath)
 
 	swapper := agentsmd.NewSwapper(p.gitClient.Dir())
-	swapped, err := swapper.Swap(p.agentsMDContent)
+	swapped, err := swapper.Swap()
 	if err != nil {
-		return fmt.Errorf("swap agents.md: %w", err)
+		return nil, fmt.Errorf("swap agents.md: %w", err)
 	}
 
-	slog.Info("AGENTS.md swapped for review", "removed", swapped)
+	slog.Info("AGENTS.md and CLAUDE.md swapped for review", "overwritten", swapped)
 
-	return nil
+	if err := p.runner.StartServe(ctx); err != nil {
+		return nil, fmt.Errorf("start serve: %w", err)
+	}
+	defer p.runner.StopServe()
+
+	raw, err := p.runner.Run(ctx, runner.RunRequest{
+		Prompt: reviewPrompt,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("run review: %w", err)
+	}
+
+	reviewResult := review.Parse(raw)
+	if reviewResult.ParseErr != nil {
+		slog.Warn("failed to parse agent response as JSON", "error", reviewResult.ParseErr)
+	} else {
+		slog.Info("review parsed", "findings", len(reviewResult.Findings))
+	}
+
+	fmt.Println()
+	fmt.Println("════════════════════════════════════════")
+	fmt.Println("  Review Result")
+	fmt.Println("════════════════════════════════════════")
+	fmt.Println()
+	fmt.Println(raw)
+	fmt.Println()
+	fmt.Println("════════════════════════════════════════")
+
+	if err := os.WriteFile(p.outputPath, []byte(raw), 0o600); err != nil {
+		return nil, fmt.Errorf("write output: %w", err)
+	}
+
+	slog.Info("review output written", "path", p.outputPath)
+
+	return reviewResult, nil
 }
 
 func (p *Pipeline) prepareDiff() (string, error) {
