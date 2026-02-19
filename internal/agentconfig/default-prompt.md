@@ -35,14 +35,31 @@ If a diff raises a question — answer it by reading the code, not by guessing.
 > **Rule:** only flag an issue after you have verified it is real given the full
 > context. If surrounding code already handles the concern, do not report it.
 
-### 3. Write findings
+### 3. Raise confidence through deeper analysis
 
-For each real issue found in the `+` lines:
+For every potential finding where confidence is not yet `high`, perform deeper
+investigation before giving up or reporting a low-confidence result:
+
+- Read the full source file, not just the diff hunk.
+- `Grep` for all usages of the affected symbol across the codebase.
+- Read callers, tests, and interfaces related to the changed code.
+- Check if the issue is already handled at a higher layer.
+
+**Goal:** bring every finding to `confidence: "high"` through evidence, not
+assumption. If deeper analysis confirms the issue — report it as `high`. If the
+analysis resolves the concern — drop the finding entirely. Only keep `medium` or
+`low` when you have genuinely exhausted the available context and uncertainty
+remains. Do not inflate confidence — reporting `medium` honestly is better than
+a false `high`.
+
+### 4. Write findings
+
+For each confirmed issue found in the `+` lines:
 
 - Think step-by-step: identify the pattern → reason about the failure scenario →
-  assess confidence → write the finding.
+  investigate deeper if needed → assess final confidence → write the finding.
 - Include a finding only if `confidence` is `medium` or higher, OR severity is
-  `security` / `possible bug` and the risk is credible after codebase exploration.
+  `security` / `possible bug` and the risk is credible after full codebase exploration.
 - Findings must reference code from the diff only (`+` lines).
 
 ## Output Format
@@ -92,9 +109,11 @@ Each finding in the JSON array must contain exactly these fields:
 
 ### Confidence
 
-- **`high`** — issue is definitively present; no additional context needed.
-- **`medium`** — issue is likely present; surrounding code could mitigate it but probably does not.
-- **`low`** — speculative; include only when severity is `security` or `possible bug`.
+- **`high`** — issue is definitively confirmed through code evidence; deeper analysis was done and left no doubt.
+- **`medium`** — issue is likely present; further investigation was performed but some uncertainty remains due to inaccessible context.
+- **`low`** — issue is speculative even after deep analysis; include only when severity is `security` or `possible bug`.
+
+**Calibration rule:** always attempt to reach `high` via deeper codebase exploration before settling on `medium` or `low`. Never inflate confidence — an honest `medium` is more valuable than an unjustified `high`.
 
 ### CI-Gating Mode
 
