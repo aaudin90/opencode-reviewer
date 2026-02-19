@@ -4,127 +4,51 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"testing"
 )
 
-const testContent = `# Режим код-ревью
-
-Проект находится в режиме автоматического код-ревью.
-
-## Запрещённые команды
-- gradlew
-`
-
-func TestSwap_ContentWritten(t *testing.T) {
+func TestSwap_EmptyFilesWritten(t *testing.T) {
 	dir := t.TempDir()
-	agentsPath := filepath.Join(dir, agentsFile)
 
 	swapper := NewSwapper(dir)
 
-	if _, err := swapper.Swap(testContent); err != nil {
+	if _, err := swapper.Swap(); err != nil {
 		t.Fatalf("Swap: %v", err)
 	}
 
-	data, err := os.ReadFile(agentsPath)
-	if err != nil {
-		t.Fatalf("read AGENTS.md: %v", err)
-	}
-
-	got := string(data)
-	if !strings.Contains(got, "Режим код-ревью") {
-		t.Error("AGENTS.md should contain provided content")
-	}
-	if !strings.Contains(got, "gradlew") {
-		t.Error("AGENTS.md should contain blocked tools from content")
-	}
-}
-
-func TestSwap_WithExistingAgentsMD(t *testing.T) {
-	dir := t.TempDir()
-	agentsPath := filepath.Join(dir, agentsFile)
-
-	if err := os.WriteFile(agentsPath, []byte("original"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	swapper := NewSwapper(dir)
-
-	swapped, err := swapper.Swap(testContent)
-	if err != nil {
-		t.Fatalf("Swap: %v", err)
-	}
-
-	if len(swapped) != 1 || swapped[0] != agentsPath {
-		t.Errorf("Swap returned %v, want [%s]", swapped, agentsPath)
-	}
-
-	data, err := os.ReadFile(agentsPath)
-	if err != nil {
-		t.Fatalf("read AGENTS.md after swap: %v", err)
-	}
-
-	if !strings.Contains(string(data), "Режим код-ревью") {
-		t.Error("AGENTS.md should contain review mode content after swap")
-	}
-}
-
-func TestSwap_WithoutExistingAgentsMD(t *testing.T) {
-	dir := t.TempDir()
-	agentsPath := filepath.Join(dir, agentsFile)
-
-	swapper := NewSwapper(dir)
-
-	swapped, err := swapper.Swap(testContent)
-	if err != nil {
-		t.Fatalf("Swap: %v", err)
-	}
-
-	if len(swapped) != 0 {
-		t.Errorf("Swap returned %v, want empty", swapped)
-	}
-
-	if _, err := os.Stat(agentsPath); err != nil {
-		t.Fatal("AGENTS.md should exist after swap")
-	}
-}
-
-func TestSwap_WithNestedAgentsMD(t *testing.T) {
-	dir := t.TempDir()
-
-	// Create nested directory structure with AGENTS.md at multiple levels.
-	sub := filepath.Join(dir, "module", "sub")
-	if err := os.MkdirAll(sub, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	rootAgents := filepath.Join(dir, agentsFile)
-	moduleAgents := filepath.Join(dir, "module", agentsFile)
-	subAgents := filepath.Join(sub, agentsFile)
-
-	for _, p := range []struct {
-		path    string
-		content string
-	}{
-		{rootAgents, "root original"},
-		{moduleAgents, "module original"},
-		{subAgents, "sub original"},
-	} {
-		if err := os.WriteFile(p.path, []byte(p.content), 0o644); err != nil {
-			t.Fatal(err)
+	for _, name := range []string{agentsFile, claudeFile} {
+		path := filepath.Join(dir, name)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if string(data) != "" {
+			t.Errorf("%s should be empty, got %q", name, string(data))
 		}
 	}
+}
+
+func TestSwap_WithExistingFiles(t *testing.T) {
+	dir := t.TempDir()
+	agentsPath := filepath.Join(dir, agentsFile)
+	claudePath := filepath.Join(dir, claudeFile)
+
+	if err := os.WriteFile(agentsPath, []byte("original agents"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(claudePath, []byte("original claude"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	swapper := NewSwapper(dir)
 
-	swapped, err := swapper.Swap(testContent)
+	swapped, err := swapper.Swap()
 	if err != nil {
 		t.Fatalf("Swap: %v", err)
 	}
 
-	// Verify returned paths cover all three originals.
 	sort.Strings(swapped)
-	want := []string{rootAgents, moduleAgents, subAgents}
+	want := []string{agentsPath, claudePath}
 	sort.Strings(want)
 
 	if len(swapped) != len(want) {
@@ -136,33 +60,99 @@ func TestSwap_WithNestedAgentsMD(t *testing.T) {
 		}
 	}
 
-	// Root AGENTS.md should be the provided review content.
-	data, err := os.ReadFile(rootAgents)
-	if err != nil {
-		t.Fatalf("read root AGENTS.md: %v", err)
-	}
-	if !strings.Contains(string(data), "Режим код-ревью") {
-		t.Error("root AGENTS.md should contain review mode content")
-	}
-
-	// Nested AGENTS.md files should not exist (they were removed).
-	for _, p := range []string{moduleAgents, subAgents} {
-		if _, statErr := os.Stat(p); !os.IsNotExist(statErr) {
-			t.Errorf("%s should not exist after swap", p)
+	// Both files should now be empty.
+	for _, p := range []string{agentsPath, claudePath} {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatalf("read %s: %v", p, err)
+		}
+		if string(data) != "" {
+			t.Errorf("%s should be empty after swap, got %q", p, string(data))
 		}
 	}
 }
 
-func TestSwap_EmptyContent(t *testing.T) {
+func TestSwap_WithoutExistingFiles(t *testing.T) {
 	dir := t.TempDir()
+
 	swapper := NewSwapper(dir)
 
-	if _, err := swapper.Swap(""); err == nil {
-		t.Fatal("Swap with empty content should return error")
+	swapped, err := swapper.Swap()
+	if err != nil {
+		t.Fatalf("Swap: %v", err)
 	}
 
-	if _, err := swapper.Swap("   \n\t  "); err == nil {
-		t.Fatal("Swap with whitespace-only content should return error")
+	if len(swapped) != 0 {
+		t.Errorf("Swap returned %v, want empty", swapped)
+	}
+
+	// Root files should exist (empty).
+	for _, name := range []string{agentsFile, claudeFile} {
+		path := filepath.Join(dir, name)
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("%s should exist after swap: %v", name, err)
+		}
+	}
+}
+
+func TestSwap_WithNestedFiles(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create nested directory structure with AGENTS.md and CLAUDE.md at multiple levels.
+	sub := filepath.Join(dir, "module", "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	rootAgents := filepath.Join(dir, agentsFile)
+	rootClaude := filepath.Join(dir, claudeFile)
+	moduleAgents := filepath.Join(dir, "module", agentsFile)
+	subClaude := filepath.Join(sub, claudeFile)
+
+	for _, p := range []struct {
+		path    string
+		content string
+	}{
+		{rootAgents, "root agents"},
+		{rootClaude, "root claude"},
+		{moduleAgents, "module agents"},
+		{subClaude, "sub claude"},
+	} {
+		if err := os.WriteFile(p.path, []byte(p.content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	swapper := NewSwapper(dir)
+
+	swapped, err := swapper.Swap()
+	if err != nil {
+		t.Fatalf("Swap: %v", err)
+	}
+
+	// All four files should be in the overwritten list.
+	sort.Strings(swapped)
+	want := []string{rootAgents, rootClaude, moduleAgents, subClaude}
+	sort.Strings(want)
+
+	if len(swapped) != len(want) {
+		t.Fatalf("Swap returned %d paths, want %d: %v", len(swapped), len(want), swapped)
+	}
+	for i := range want {
+		if swapped[i] != want[i] {
+			t.Errorf("swapped[%d] = %s, want %s", i, swapped[i], want[i])
+		}
+	}
+
+	// All files should be empty.
+	for _, p := range want {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatalf("read %s: %v", p, err)
+		}
+		if string(data) != "" {
+			t.Errorf("%s should be empty after swap, got %q", p, string(data))
+		}
 	}
 }
 
@@ -179,7 +169,7 @@ func TestSwap_WriteError(t *testing.T) {
 
 	swapper := NewSwapper(dir)
 
-	if _, err := swapper.Swap(testContent); err == nil {
+	if _, err := swapper.Swap(); err == nil {
 		t.Fatal("Swap should return error when directory is read-only")
 	}
 }
@@ -200,7 +190,7 @@ func TestSwap_SkipsHeavyDirs(t *testing.T) {
 
 	swapper := NewSwapper(dir)
 
-	swapped, err := swapper.Swap(testContent)
+	swapped, err := swapper.Swap()
 	if err != nil {
 		t.Fatalf("Swap: %v", err)
 	}
@@ -209,7 +199,7 @@ func TestSwap_SkipsHeavyDirs(t *testing.T) {
 		t.Errorf("Swap returned %v, want empty (heavy dirs should be skipped)", swapped)
 	}
 
-	// AGENTS.md inside node_modules should still exist.
+	// AGENTS.md inside node_modules should still have original content.
 	data, err := os.ReadFile(nmAgents)
 	if err != nil {
 		t.Fatalf("node_modules AGENTS.md should still exist: %v", err)

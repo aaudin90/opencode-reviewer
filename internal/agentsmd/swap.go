@@ -1,15 +1,14 @@
 package agentsmd
 
 import (
-	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 const agentsFile = "AGENTS.md"
+const claudeFile = "CLAUDE.md"
 
 // heavyDirs contains directory names that should be skipped during tree walk
 // to avoid traversing large dependency/build/cache directories.
@@ -47,8 +46,13 @@ var heavyDirs = map[string]struct{}{
 	".opencode-review": {},
 }
 
-// Swapper removes existing AGENTS.md files from the project tree
-// and writes review-mode content as root AGENTS.md.
+// targetFiles lists the filenames to find and overwrite with empty content.
+var targetFiles = map[string]struct{}{
+	agentsFile: {},
+	claudeFile: {},
+}
+
+// Swapper finds and empties AGENTS.md and CLAUDE.md files in the project tree.
 // Restoration is handled externally via gitClient.Clean().
 type Swapper struct {
 	projectDir string
@@ -61,32 +65,30 @@ func NewSwapper(projectDir string) *Swapper {
 	}
 }
 
-// Swap removes every AGENTS.md found in the project tree and writes
-// the provided content as AGENTS.md at the project root.
-// It returns the paths of all removed AGENTS.md files.
-func (s *Swapper) Swap(content string) ([]string, error) {
-	if strings.TrimSpace(content) == "" {
-		return nil, errors.New("agents md content must not be empty")
-	}
-
-	removed, err := s.removeAll()
+// Swap finds every AGENTS.md and CLAUDE.md in the project tree and overwrites
+// them with an empty string. It also ensures empty AGENTS.md and CLAUDE.md
+// exist at the project root. Returns the paths of all overwritten files.
+func (s *Swapper) Swap() ([]string, error) {
+	overwritten, err := s.overwriteAll()
 	if err != nil {
-		return nil, fmt.Errorf("remove agents files: %w", err)
+		return nil, fmt.Errorf("overwrite agent files: %w", err)
 	}
 
-	agentsPath := filepath.Join(s.projectDir, agentsFile)
-
-	if err := os.WriteFile(agentsPath, []byte(strings.TrimSpace(content)+"\n"), 0o644); err != nil { // #nosec G306 -- non-sensitive project file
-		return nil, fmt.Errorf("write %s: %w", agentsFile, err)
+	// Ensure root files exist (empty).
+	for _, name := range []string{agentsFile, claudeFile} {
+		rootPath := filepath.Join(s.projectDir, name)
+		if err := os.WriteFile(rootPath, []byte(""), 0o644); err != nil { // #nosec G306 -- non-sensitive project file
+			return nil, fmt.Errorf("write %s: %w", name, err)
+		}
 	}
 
-	return removed, nil
+	return overwritten, nil
 }
 
-// removeAll walks the project tree and removes every AGENTS.md.
-// It returns the paths of removed files.
-func (s *Swapper) removeAll() ([]string, error) {
-	var removed []string
+// overwriteAll walks the project tree and overwrites every AGENTS.md and CLAUDE.md
+// with an empty string. Returns the paths of overwritten files.
+func (s *Swapper) overwriteAll() ([]string, error) {
+	var overwritten []string
 
 	err := filepath.WalkDir(s.projectDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -104,15 +106,15 @@ func (s *Swapper) removeAll() ([]string, error) {
 			return nil
 		}
 
-		if d.Name() == agentsFile {
-			if removeErr := os.Remove(path); removeErr != nil {
-				return fmt.Errorf("remove %s: %w", path, removeErr)
+		if _, match := targetFiles[d.Name()]; match {
+			if writeErr := os.WriteFile(path, []byte(""), 0o644); writeErr != nil { // #nosec G306 -- non-sensitive project file
+				return fmt.Errorf("overwrite %s: %w", path, writeErr)
 			}
-			removed = append(removed, path)
+			overwritten = append(overwritten, path)
 		}
 
 		return nil
 	})
 
-	return removed, err
+	return overwritten, err
 }
