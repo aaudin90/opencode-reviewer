@@ -1,43 +1,75 @@
+# OpenCode Reviewer configuration example.
+# Copy to dev.toml and adjust for your project:
+#   cp configs/example.toml configs/dev.toml
+#
+# Environment variables:
+#   REVIEW_BRANCH                Branch to review (overridden by --branch flag)
+#   REVIEW_PROVIDER_CONFIG_PATH  Path to provider JSON file (overrides provider_config_path)
+#   REVIEW_PROVIDER_CONFIG       Inline provider JSON config
+#   REVIEW_AGENT_CONFIG_PATH     Path to agent prompt file (overrides agent_config_path)
+#   REVIEW_AGENT_CONFIG          Inline agent prompt or JSON with "prompt" field
+#
+# Priority (provider & agent config): env file path > env inline > TOML path.
+
+# project_dir: absolute path to the project repository to review.
+# Used as working directory for git, opencode serve, and output.
+project_dir = "/path/to/your/project"
+
+# [env]: environment variables set before loading provider/agent configs.
+# Values are set only if the variable is not already defined in the environment.
+# Useful for API keys referenced by {env:...} placeholders in provider.json.
+[env]
+  LLM_PROXY_API_KEY = ""
+
 [opencode]
-  endpoint = "http://localhost:4096"
+  # endpoint: URL of a running opencode serve instance.
+  # If set, the reviewer connects to it instead of starting a subprocess.
+  # endpoint = "http://localhost:4096"
+
+  # port: port for the opencode subprocess (used when endpoint is empty).
+  # Default: 4096.
   port = 4096
-  model = "anthropic/claude-sonnet-4-20250514"
+
+  # model: LLM model identifier.
+  model = "llm-proxy/kimi-k2.5"
+
+  # binary: path to the opencode CLI binary.
+  # Default: "opencode" (resolved via PATH).
   binary = "opencode"
+
+  # stage_timeout: maximum seconds for a single review stage.
+  # Default: 600.
   stage_timeout = 600
 
+  # max_steps: maximum agent steps per review session.
+  # Default: 30.
+  max_steps = 30
+
+  # provider_config_path: path to provider JSON config (relative to this file or absolute).
+  # Can also be set via REVIEW_PROVIDER_CONFIG_PATH env var.
+  provider_config_path = "provider.json"
+
 [git]
-  project_dir = "."
+  # remote: git remote name. Default: "origin".
   remote = "origin"
+
+  # branch: branch to review.
+  # Can also be set via --branch flag or REVIEW_BRANCH env var.
   branch = ""
+
+  # base_branch: branch to compare against. Default: "main".
   base_branch = "main"
 
 [pipeline]
-  agents_md_content = """
-# Режим код-ревью
-
-Проект находится в режиме автоматического код-ревью.
-
-## Общие правила
-1. Только чтение. Не создавай и не редактируй файлы проекта.
-2. Не запускай сборку, тесты или деплой.
-3. Фокус на анализе diff — не уходи в побочные темы.
-4. Файл AGENTS.md — служебный, не анализируй его содержимое.
-5. Отвечай на русском языке.
-6. Формат замечаний: файл, строка, серьёзность (🔴/🟡/🔵), описание, рекомендация.
-
-## Запрещённые команды
-- `gradlew`
-- `./gradlew`
-- `gradle assemble`
-- `mvn package`
-- `mvn install`
-- `npm run build`
-- `yarn build`
-- `docker build`
-- `docker compose up`
-- `make install`
-"""
+  # agent_config_path: path to agent prompt file (relative to this file or absolute).
+  # Can also be set via REVIEW_AGENT_CONFIG_PATH env var.
+  agent_config_path = "agent-prompt.md"
 
 [output]
+  # file_path: where to write the review report (relative to project_dir or absolute).
+  # Default: "review-report.md".
   file_path = "review-report.md"
+
+  # format_project_dir: project dir substituted into report paths for display.
+  # Leave empty to use project_dir as-is.
   format_project_dir = ""
