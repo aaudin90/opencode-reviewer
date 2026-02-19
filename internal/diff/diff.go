@@ -10,36 +10,6 @@ import (
 	"github.com/aaudin90/opencode-reviewer/internal/git"
 )
 
-// ChangeType represents the kind of change applied to a file.
-type ChangeType string
-
-const (
-	Added    ChangeType = "added"
-	Modified ChangeType = "modified"
-	Deleted  ChangeType = "deleted"
-	Renamed  ChangeType = "renamed"
-)
-
-// FileDiff holds parsed information about a single changed file.
-type FileDiff struct {
-	Path       string
-	OldPath    string
-	Language   string
-	ChangeType ChangeType
-	Added      int
-	Deleted    int
-	Diff       string
-}
-
-// Result contains the full processed diff for a branch comparison.
-type Result struct {
-	Files                    []FileDiff
-	FilteredFiles            []string
-	TotalAdded, TotalDeleted int
-	DiffStat, CommitLog      string
-	Branch, BaseBranch       string
-}
-
 // Prepare fetches the diff between branch and baseBranch, parses it,
 // filters noise files, and sorts the result.
 func Prepare(gitClient *git.Client, branch, baseBranch string) (*Result, error) {
