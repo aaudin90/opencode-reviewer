@@ -94,6 +94,16 @@ func TestNew_FullConfig(t *testing.T) {
 	if !strings.Contains(agentContent, "model: my-proxy/claude-sonnet") {
 		t.Error("agent file missing model in frontmatter")
 	}
+
+	// Verify opencode/tools/submit_review.ts
+	toolPath := filepath.Join(ws.Dir(), "opencode", "tools", "submit_review.ts")
+	toolData, err := os.ReadFile(toolPath)
+	if err != nil {
+		t.Fatalf("read submit_review.ts: %v", err)
+	}
+	if !strings.Contains(string(toolData), "@opencode-ai/plugin") {
+		t.Error("submit_review.ts missing expected content")
+	}
 }
 
 func TestNew_NoProvider(t *testing.T) {
@@ -119,6 +129,19 @@ func TestNew_NoProvider(t *testing.T) {
 
 	if _, ok := parsed["provider"]; ok {
 		t.Error("provider should not be present when ProviderJSON is nil")
+	}
+}
+
+func TestNew_ToolFileAlwaysWritten(t *testing.T) {
+	ws, err := New(Config{Model: "test/model"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer func() { _ = ws.Cleanup() }()
+
+	toolPath := filepath.Join(ws.Dir(), "opencode", "tools", "submit_review.ts")
+	if _, err := os.Stat(toolPath); err != nil {
+		t.Errorf("submit_review.ts should always be written: %v", err)
 	}
 }
 
