@@ -99,6 +99,7 @@ Priority: env file path > env inline > TOML path (for provider config).`),
 	}
 
 	applyEnv(cfg.Env)
+	initSlog()
 
 	configDir := filepath.Dir(cli.Config)
 
@@ -154,17 +155,24 @@ func run(cfg *config.Config, ws *workspace.Workspace) error {
 	gitClient := git.NewClient(projectDir, cfg.Git.Remote)
 	ocRunner := runner.New(cfg.OpenCode, projectDir, ws)
 
-	outputPath := cfg.Output.FilePath
-	if !filepath.IsAbs(outputPath) {
-		outputPath = filepath.Join(projectDir, outputPath)
-	}
-
-	p := pipeline.New(gitClient, cfg.Git.Branch, cfg.Git.BaseBranch,
-		ocRunner, outputPath)
+	p := pipeline.New(gitClient, cfg.Git.Branch, cfg.Git.BaseBranch, ocRunner)
 
 	ctx := context.Background()
 	_, err = p.Run(ctx)
 	return err
+}
+
+// initSlog configures the global slog logger.
+// Level is read from SLOG_LEVEL env var (e.g. "debug", "info", "warn", "error").
+// Defaults to info if unset or invalid.
+func initSlog() {
+	level := slog.LevelInfo
+	if val := os.Getenv("SLOG_LEVEL"); val != "" {
+		if err := level.UnmarshalText([]byte(val)); err != nil {
+			slog.Warn("invalid SLOG_LEVEL, defaulting to info", "value", val)
+		}
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
 }
 
 // applyEnv sets environment variables from the [env] TOML section.
