@@ -16,8 +16,8 @@ import (
 
 var versionRe = regexp.MustCompile(`(\d+\.\d+\.\d+)`)
 
-// ValidateBinary проверяет наличие и версию бинаря opencode.
-// Пропускается, если cfg.Endpoint задан (внешний инстанс не требует бинаря).
+// ValidateBinary checks the presence and version of the opencode binary.
+// Skipped when cfg.Endpoint is set (external instance does not require a local binary).
 func ValidateBinary(cfg config.OpenCodeConfig) error {
 	if cfg.Endpoint != "" {
 		return nil
@@ -29,7 +29,7 @@ func ValidateBinary(cfg config.OpenCodeConfig) error {
 
 	version, err := readVersion(cfg.Binary)
 	if err != nil {
-		// не можем прочитать версию — логируем предупреждение, не падаем
+		// cannot read version — log a warning and proceed
 		slog.Warn("could not read opencode version", "binary", cfg.Binary, "error", err)
 		return nil
 	}

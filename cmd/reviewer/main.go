@@ -169,7 +169,7 @@ func initSlog() {
 	level := slog.LevelInfo
 	if val := os.Getenv("SLOG_LEVEL"); val != "" {
 		if err := level.UnmarshalText([]byte(val)); err != nil {
-			slog.Warn("invalid SLOG_LEVEL, defaulting to info", "value", val)
+			slog.Warn("invalid SLOG_LEVEL, defaulting to info", "value", val) // #nosec G706 -- env var, not user input
 		}
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
