@@ -3,9 +3,11 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,6 +17,21 @@ import (
 // newTestRunner creates a Runner with nil workspace for tests using external endpoint.
 func newTestRunner(cfg config.OpenCodeConfig) *Runner {
 	return New(cfg, "/tmp", nil)
+}
+
+// collectRunResult drains a RunEvent channel and returns the final RunResult or error.
+func collectRunResult(t *testing.T, ch <-chan RunEvent) (*RunResult, error) {
+	t.Helper()
+	var result *RunResult
+	for event := range ch {
+		switch {
+		case event.Err != nil:
+			return nil, event.Err
+		case event.Final != nil:
+			result = event.Final
+		}
+	}
+	return result, nil
 }
 
 func TestExtractText(t *testing.T) {
@@ -90,8 +107,37 @@ func TestWaitHealthy_Timeout(t *testing.T) {
 	}
 }
 
+// makeToolCallSSE produces a valid SSE payload for a submit_review tool result
+// in the real opencode format.
+func makeToolCallSSE(sessionID string, args any) string {
+	argsJSON, _ := json.Marshal(args)
+	payload := fmt.Sprintf(`{"type":"message.part.updated","properties":{"part":{"sessionID":%q,"type":"tool","tool":"submit_review","state":{"status":"completed","input":%s}}}}`,
+		sessionID, argsJSON)
+	return "event: message.part.updated\ndata: " + payload + "\n\n"
+}
+
 func TestRun(t *testing.T) {
+	toolArgs := map[string]any{
+		"summary":  "Looks good",
+		"verdict":  "approve",
+		"findings": []any{},
+	}
+	ssePayload := makeToolCallSSE("sess-1", toolArgs)
+
 	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /event", func(w http.ResponseWriter, req *http.Request) {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming not supported", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, ssePayload)
+		flusher.Flush()
+	})
 
 	mux.HandleFunc("POST /session", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -108,7 +154,6 @@ func TestRun(t *testing.T) {
 		if mr.Agent != "reviewer" {
 			t.Errorf("agent = %q, want reviewer", mr.Agent)
 		}
-
 		if mr.Model == nil {
 			t.Error("model is nil, expected object")
 		} else {
@@ -143,15 +188,183 @@ func TestRun(t *testing.T) {
 		StageTimeout: 10,
 	})
 
-	result, err := r.Run(context.Background(), RunRequest{
-		Prompt: "review this",
-	})
+	result, err := collectRunResult(t, r.Run(context.Background(), RunRequest{
+		Prompt:   "review this",
+		ToolName: "submit_review",
+	}))
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 
-	if result != "Review result part 2" {
-		t.Errorf("result = %q, want %q", result, "Review result part 2")
+	if result.ToolArgs == nil {
+		t.Fatal("ToolArgs is nil, expected non-nil when agent calls submit_review")
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(result.ToolArgs, &got); err != nil {
+		t.Fatalf("unmarshal ToolArgs: %v", err)
+	}
+	if got["verdict"] != "approve" {
+		t.Errorf("verdict = %v, want approve", got["verdict"])
+	}
+	if got["summary"] != "Looks good" {
+		t.Errorf("summary = %v, want Looks good", got["summary"])
+	}
+}
+
+func TestRunRetry(t *testing.T) {
+	toolArgs := map[string]any{
+		"summary":  "Issues found",
+		"verdict":  "request_changes",
+		"findings": []any{},
+	}
+	ssePayload := makeToolCallSSE("sess-retry", toolArgs)
+
+	var sseCallCount atomic.Int32
+	var msgPrompts []string
+
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /event", func(w http.ResponseWriter, req *http.Request) {
+		count := sseCallCount.Add(1)
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming not supported", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.WriteHeader(http.StatusOK)
+		if count >= 3 {
+			// On the 3rd attempt, return the tool result.
+			fmt.Fprint(w, ssePayload)
+		}
+		// Otherwise close the stream immediately (no tool call event).
+		flusher.Flush()
+	})
+
+	mux.HandleFunc("POST /session", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(sessionResponse{ID: "sess-retry"})
+	})
+
+	mux.HandleFunc("POST /session/{id}/message", func(w http.ResponseWriter, req *http.Request) {
+		var mr messageRequest
+		if err := json.NewDecoder(req.Body).Decode(&mr); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if len(mr.Parts) > 0 {
+			msgPrompts = append(msgPrompts, mr.Parts[0].Text)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(messageResponse{
+			Info: messageInfo{ID: "msg-retry"},
+			Parts: []messagePart{
+				{Type: "text", Text: "some text"},
+			},
+		})
+	})
+
+	mux.HandleFunc("DELETE /session/{id}", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	r := newTestRunner(config.OpenCodeConfig{
+		Endpoint:     srv.URL,
+		Model:        "test/model",
+		StageTimeout: 30,
+	})
+
+	const testTool = "submit_review"
+	result, err := collectRunResult(t, r.Run(context.Background(), RunRequest{Prompt: "review this", ToolName: testTool}))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if result.ToolArgs == nil {
+		t.Fatal("ToolArgs is nil, expected non-nil after retry succeeded")
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(result.ToolArgs, &got); err != nil {
+		t.Fatalf("unmarshal ToolArgs: %v", err)
+	}
+	if got["verdict"] != "request_changes" {
+		t.Errorf("verdict = %v, want request_changes", got["verdict"])
+	}
+
+	// Verify that retry prompts were sent on subsequent attempts.
+	if len(msgPrompts) < 2 {
+		t.Errorf("expected at least 2 messages (original + retry), got %d", len(msgPrompts))
+	}
+	wantRetry := retryPromptFor(testTool)
+	for i, p := range msgPrompts[1:] {
+		if p != wantRetry {
+			t.Errorf("msgPrompts[%d] = %q, want retryPromptFor(%q)", i+1, p, testTool)
+		}
+	}
+}
+
+func TestRunFallback(t *testing.T) {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /event", func(w http.ResponseWriter, req *http.Request) {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming not supported", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.WriteHeader(http.StatusOK)
+		// No tool call event — stream ends immediately.
+		flusher.Flush()
+	})
+
+	mux.HandleFunc("POST /session", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(sessionResponse{ID: "sess-fallback"})
+	})
+
+	mux.HandleFunc("POST /session/{id}/message", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(messageResponse{
+			Info: messageInfo{ID: "msg-fallback"},
+			Parts: []messagePart{
+				{Type: "text", Text: "Review result "},
+				{Type: "text", Text: "part 2"},
+			},
+		})
+	})
+
+	mux.HandleFunc("DELETE /session/{id}", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	r := newTestRunner(config.OpenCodeConfig{
+		Endpoint:     srv.URL,
+		Model:        "test/model",
+		StageTimeout: 30,
+	})
+
+	result, err := collectRunResult(t, r.Run(context.Background(), RunRequest{Prompt: "review this", ToolName: "submit_review"}))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if result.ToolArgs != nil {
+		t.Error("ToolArgs should be nil in fallback mode")
+	}
+	if result.FallbackText != "Review result part 2" {
+		t.Errorf("FallbackText = %q, want %q", result.FallbackText, "Review result part 2")
 	}
 }
 
@@ -180,6 +393,12 @@ func TestRunTimeout(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
+	mux.HandleFunc("GET /event", func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		<-req.Context().Done()
+	})
+
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 	defer close(handlerDone)
@@ -190,9 +409,10 @@ func TestRunTimeout(t *testing.T) {
 		StageTimeout: 1,
 	})
 
-	_, err := r.Run(context.Background(), RunRequest{
-		Prompt: "slow review",
-	})
+	_, err := collectRunResult(t, r.Run(context.Background(), RunRequest{
+		Prompt:   "slow review",
+		ToolName: "submit_review",
+	}))
 	if err == nil {
 		t.Fatal("Run should return error on timeout")
 	}
