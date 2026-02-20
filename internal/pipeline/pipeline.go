@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 
 	"github.com/aaudin90/opencode-reviewer/internal/agentsmd"
 	"github.com/aaudin90/opencode-reviewer/internal/diff"
@@ -14,29 +15,30 @@ import (
 	"github.com/aaudin90/opencode-reviewer/internal/runner"
 )
 
-const reviewPrompt = "Прочитай diff из файла .opencode-review/diff.md и выполни код-ревью."
-
 type Pipeline struct {
-	gitClient  *git.Client
-	branch     string
-	baseBranch string
-	runner     *runner.Runner
+	gitClient   *git.Client
+	branch      string
+	baseBranch  string
+	runner      *runner.Runner
+	promptPaths []string // resolved absolute paths; must be non-empty
 }
 
 func New(
 	gitClient *git.Client,
 	branch, baseBranch string,
 	r *runner.Runner,
+	promptPaths []string,
 ) *Pipeline {
 	return &Pipeline{
-		gitClient:  gitClient,
-		branch:     branch,
-		baseBranch: baseBranch,
-		runner:     r,
+		gitClient:   gitClient,
+		branch:      branch,
+		baseBranch:  baseBranch,
+		runner:      r,
+		promptPaths: promptPaths,
 	}
 }
 
-func (p *Pipeline) Run(ctx context.Context) (*models.ReviewResult, error) {
+func (p *Pipeline) Run(ctx context.Context) ([]*models.ReviewResult, error) {
 	if err := p.prepareBranch(); err != nil {
 		return nil, fmt.Errorf("prepare branch: %w", err)
 	}
@@ -57,12 +59,12 @@ func (p *Pipeline) Run(ctx context.Context) (*models.ReviewResult, error) {
 		return nil, fmt.Errorf("swap agents.md: %w", err)
 	}
 
-	runResult, err := p.runReview(ctx)
+	results, err := p.runAllReviews(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("run review: %w", err)
+		return nil, fmt.Errorf("run reviews: %w", err)
 	}
 
-	return p.parseResult(runResult), nil
+	return results, nil
 }
 
 func (p *Pipeline) swapAgentsMD() error {
@@ -75,14 +77,51 @@ func (p *Pipeline) swapAgentsMD() error {
 	return nil
 }
 
-func (p *Pipeline) runReview(ctx context.Context) (*runner.RunResult, error) {
+func (p *Pipeline) runAllReviews(ctx context.Context) ([]*models.ReviewResult, error) {
 	if err := p.runner.StartServe(ctx); err != nil {
 		return nil, fmt.Errorf("start serve: %w", err)
 	}
 	defer p.runner.StopServe()
 
+	if len(p.promptPaths) == 0 {
+		return nil, fmt.Errorf("no prompt paths configured: set pipeline.prompt_paths in config or REVIEW_PROMPT_PATHS env")
+	}
+
+	resultsCh := make(chan promptRunResult, len(p.promptPaths))
+
+	for _, path := range p.promptPaths {
+		go func(promptPath string) {
+			result, runErr := p.runSingleReview(ctx, promptPath)
+			resultsCh <- promptRunResult{path: promptPath, result: result, err: runErr}
+		}(path)
+	}
+
+	results := make([]*models.ReviewResult, 0, len(p.promptPaths))
+	for range p.promptPaths {
+		r := <-resultsCh
+		if r.err != nil {
+			slog.Error("review session failed", "prompt", r.path, "error", r.err)
+			continue
+		}
+		slog.Info("review result",
+			"prompt", r.path,
+			"reviewer", r.result.ReviewerName,
+			"verdict", r.result.Verdict,
+			"findings", len(r.result.Findings),
+		)
+		results = append(results, r.result)
+	}
+
+	return results, nil
+}
+
+func (p *Pipeline) runSingleReview(ctx context.Context, promptPath string) (*models.ReviewResult, error) {
+	prompt, err := readPromptFile(promptPath)
+	if err != nil {
+		return nil, err
+	}
 	var runResult *runner.RunResult
-	for event := range p.runner.Run(ctx, runner.RunRequest{Prompt: reviewPrompt, ToolName: "submit_review"}) {
+	for event := range p.runner.Run(ctx, runner.RunRequest{Prompt: prompt, ToolName: "submit_review", PromptPath: promptPath}) {
 		switch {
 		case event.Err != nil:
 			return nil, fmt.Errorf("run review: %w", event.Err)
@@ -96,7 +135,7 @@ func (p *Pipeline) runReview(ctx context.Context) (*runner.RunResult, error) {
 	if runResult == nil {
 		return nil, fmt.Errorf("no result received")
 	}
-	return runResult, nil
+	return p.parseResult(runResult), nil
 }
 
 func (p *Pipeline) parseResult(runResult *runner.RunResult) *models.ReviewResult {
@@ -123,8 +162,6 @@ func (p *Pipeline) parseResult(runResult *runner.RunResult) *models.ReviewResult
 		}
 	}
 	slog.Debug("intermediate review result", "result", string(prettyBytes))
-
-	slog.Info("review completed", "verdict", reviewResult.Verdict, "findings", len(reviewResult.Findings))
 
 	return reviewResult
 }
@@ -170,4 +207,12 @@ func (p *Pipeline) prepareBranch() error {
 	}
 
 	return nil
+}
+
+func readPromptFile(path string) (string, error) {
+	data, err := os.ReadFile(path) // #nosec G304 -- path from trusted config
+	if err != nil {
+		return "", fmt.Errorf("read prompt file %q: %w", path, err)
+	}
+	return string(data), nil
 }

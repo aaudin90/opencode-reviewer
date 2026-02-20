@@ -149,7 +149,7 @@ func (r *Runner) run(ctx context.Context, req RunRequest, out chan<- RunEvent) {
 		out <- RunEvent{Err: fmt.Errorf("create session: %w", err)}
 		return
 	}
-	slog.Info("session created", "id", sessionID)
+	slog.Info("session created", "id", sessionID, "prompt", req.PromptPath)
 
 	sseClient := sse.New(r.httpClient, r.baseURL)
 	var lastResp *messageResponse
@@ -198,8 +198,18 @@ func (r *Runner) run(ctx context.Context, req RunRequest, out chan<- RunEvent) {
 				out <- RunEvent{ToolCall: &tc}
 			}
 			if res.err == nil {
+				cost, tokens, statsErr := r.getSessionStats(sessionID)
 				r.cleanupSession(sessionID)
-				slog.Info("review completed via tool call", "session", sessionID, "tool", req.ToolName, "attempt", attempt)
+				if statsErr != nil {
+					slog.Warn("failed to get session stats", "session", sessionID, "error", statsErr)
+				}
+				slog.Info("review completed via tool call",
+					"session", sessionID, "prompt", req.PromptPath, "tool", req.ToolName, "attempt", attempt,
+					"cost", cost,
+					"tokens_input", tokens.Input, "tokens_output", tokens.Output,
+					"tokens_reasoning", tokens.Reasoning,
+					"tokens_cache_read", tokens.Cache.Read, "tokens_cache_write", tokens.Cache.Write,
+				)
 				out <- RunEvent{Final: &RunResult{ToolArgs: res.data}}
 				return
 			}
@@ -397,6 +407,42 @@ func (r *Runner) cleanupSession(sessionID string) {
 	if err := r.deleteSession(ctx, sessionID); err != nil {
 		slog.Warn("failed to delete session", "id", sessionID, "error", err)
 	}
+}
+
+func (r *Runner) getSessionStats(sessionID string) (cost float64, tokens tokenUsage, err error) {
+	ctx, cancel := context.WithTimeout(context.Background(), abortTimeout)
+	defer cancel()
+
+	url := fmt.Sprintf("%s/session/%s/message", r.baseURL, sessionID)
+	req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if reqErr != nil {
+		return 0, tokenUsage{}, reqErr
+	}
+
+	resp, doErr := r.httpClient.Do(req) // #nosec G704 -- URL from trusted config
+	if doErr != nil {
+		return 0, tokenUsage{}, doErr
+	}
+	defer resp.Body.Close()
+
+	var messages []sessionMessage
+	if decErr := json.NewDecoder(resp.Body).Decode(&messages); decErr != nil {
+		return 0, tokenUsage{}, fmt.Errorf("decode session messages: %w", decErr)
+	}
+
+	for _, m := range messages {
+		if m.Info.Role != "assistant" {
+			continue
+		}
+		cost += m.Info.Cost
+		t := m.Info.Tokens
+		tokens.Input += t.Input
+		tokens.Output += t.Output
+		tokens.Reasoning += t.Reasoning
+		tokens.Cache.Read += t.Cache.Read
+		tokens.Cache.Write += t.Cache.Write
+	}
+	return cost, tokens, nil
 }
 
 func (r *Runner) extractText(parts []messagePart) string {

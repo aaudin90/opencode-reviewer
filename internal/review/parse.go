@@ -9,9 +9,10 @@ import (
 )
 
 type submitReviewArgs struct {
-	Summary  string           `json:"summary"`
-	Verdict  string           `json:"verdict"`
-	Findings []models.Finding `json:"findings"`
+	ReviewerName string           `json:"reviewer_name"`
+	Summary      string           `json:"summary"`
+	Verdict      string           `json:"verdict"`
+	Findings     []models.Finding `json:"findings"`
 }
 
 var validVerdicts = map[string]bool{
@@ -30,6 +31,7 @@ func ParseToolArgs(data json.RawMessage) *models.ReviewResult {
 		result.ParseErr = fmt.Errorf("parse tool args: %w", err)
 		return result
 	}
+	result.ReviewerName = args.ReviewerName
 	result.Summary = args.Summary
 	result.Verdict = args.Verdict
 	result.Findings = args.Findings

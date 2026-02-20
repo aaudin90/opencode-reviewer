@@ -2,21 +2,38 @@
 # Copy to dev.toml and adjust for your project:
 #   cp configs/example.toml configs/dev.toml
 #
-# Environment variables:
-#   REVIEW_BRANCH                Branch to review (overridden by --branch flag)
-#   REVIEW_PROVIDER_CONFIG_PATH  Path to provider JSON file (overrides provider_config_path)
-#   REVIEW_PROVIDER_CONFIG       Inline provider JSON config
-#   REVIEW_AGENT_CONFIG_PATH     Path to agent prompt file (overrides agent_config_path)
-#   REVIEW_AGENT_CONFIG          Inline agent prompt or JSON with "prompt" field
+# Config file is optional: all settings can be provided via environment variables.
 #
-# Priority (provider & agent config): env file path > env inline > TOML path.
+# Environment variables (override TOML values):
+#   REVIEW_PROJECT_DIR               Path to the project repository
+#   REVIEW_BRANCH                    Branch to review (overridden by --branch flag)
+#   REVIEW_GIT_REMOTE                Git remote name
+#   REVIEW_GIT_BASE_BRANCH           Base branch for diff
+#   REVIEW_OPENCODE_ENDPOINT         opencode API endpoint URL
+#   REVIEW_OPENCODE_PORT             opencode port
+#   REVIEW_OPENCODE_MODEL            LLM model identifier
+#   REVIEW_OPENCODE_BINARY           Path to opencode binary
+#   REVIEW_OPENCODE_STAGE_TIMEOUT    Timeout per stage in seconds
+#   REVIEW_OPENCODE_MAX_STEPS        Max agent steps per session
+#   REVIEW_OPENCODE_MIN_VERSION      Minimum opencode version
+#   REVIEW_PROVIDER_CONFIG_PATH      Path to provider JSON file
+#   REVIEW_PROVIDER_CONFIG           Inline provider JSON config
+#   REVIEW_AGENT_CONFIG_PATH         Path to agent prompt file
+#   REVIEW_AGENT_CONFIG              Inline agent prompt or JSON with "prompt" field
+#   REVIEW_PROMPT_PATHS              Comma-separated paths to prompt files
+#
+# Priority (branch):   --branch flag > REVIEW_BRANCH env > git.branch TOML.
+# Priority (provider): REVIEW_PROVIDER_CONFIG_PATH > REVIEW_PROVIDER_CONFIG > TOML path.
+# Priority (agent):    REVIEW_AGENT_CONFIG_PATH > REVIEW_AGENT_CONFIG > TOML path > built-in default.
+# Priority (prompts):  REVIEW_PROMPT_PATHS > pipeline.prompt_paths TOML > built-in default.
 
 # project_dir: absolute path to the project repository to review.
 # Used as working directory for git, opencode serve, and output.
 project_dir = "/path/to/your/project"
 
-# [env]: environment variables set before loading provider/agent configs.
-# Values are set only if the variable is not already defined in the environment.
+# [env]: environment variables applied after TOML fields but before system env takes effect.
+# Values override TOML config fields but do not override variables already set in the system environment.
+# Priority: system env > [env] > TOML fields.
 # Useful for API keys referenced by {env:...} placeholders in provider.json.
 [env]
   LLM_PROXY_API_KEY = ""
@@ -65,11 +82,14 @@ project_dir = "/path/to/your/project"
   # Can also be set via REVIEW_AGENT_CONFIG_PATH env var.
   agent_config_path = "agent-prompt.md"
 
-[output]
-  # file_path: where to write the review report (relative to project_dir or absolute).
-  # Default: "review-report.md".
-  file_path = "review-report.md"
+  # prompt_paths: list of prompt files (relative to this file or absolute).
+  # Each file triggers a separate parallel review session.
+  # Can also be set via REVIEW_PROMPT_PATHS env var (comma-separated paths).
+  # If not set, the built-in default review prompt is used.
+  prompt_paths = [
+    "../prompt-examples/review-bugs.md",
+    "../prompt-examples/review-security.md",
+    "../prompt-examples/review-architecture.md",
+    "../prompt-examples/review-style.md",
+  ]
 
-  # format_project_dir: project dir substituted into report paths for display.
-  # Leave empty to use project_dir as-is.
-  format_project_dir = ""

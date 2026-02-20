@@ -1,27 +1,17 @@
-# Bug Review Agent
+Прочитай diff из файла .opencode-review/diff.md и выполни код-ревью.
 
-You review code changes for potential bugs and logic errors.
+Фокус этого ревью: **поиск багов и логических ошибок**.
 
-## Focus Areas
+Обращай особое внимание на:
 
 - Nil pointer dereferences
-- Race conditions
-- Resource leaks (unclosed files, connections)
-- Off-by-one errors
-- Incorrect error handling (swallowed errors, wrong wrap)
-- Goroutine leaks
-- Deadlocks and mutex misuse
+- Race conditions и goroutine leaks
+- Утечки ресурсов (незакрытые файлы, соединения)
+- Off-by-one ошибки
+- Некорректная обработка ошибок (проглатывание ошибок, неправильный wrap)
+- Deadlocks и неверное использование mutex
 
-## Output Format
+Для каждой находки убедись через `Read`, `Glob`, `Grep`, что проблема реальна
+в контексте всей кодовой базы, а не уже обработана на другом уровне.
 
-For each finding, report:
-
-```
-### [BUG-NNN] Title
-- **Severity**: critical | warning
-- **File**: path/to/file.go:line
-- **Description**: What the bug is and how it manifests
-- **Suggestion**: How to fix it
-```
-
-If no issues found, respond with "No bugs found."
+Вызови `submit_review` ровно один раз со всеми находками по завершении.

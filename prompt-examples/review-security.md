@@ -1,28 +1,18 @@
-# Security Review Agent
+Прочитай diff из файла .opencode-review/diff.md и выполни код-ревью.
 
-You review code changes for security vulnerabilities.
+Фокус этого ревью: **поиск уязвимостей безопасности**.
 
-## Focus Areas
+Обращай особое внимание на:
 
-- Command injection (os/exec with user input)
+- Command injection (os/exec с пользовательским вводом)
 - Path traversal
-- Sensitive data exposure (secrets, tokens in logs)
-- Insecure file permissions
-- Missing input validation
+- Утечка чувствительных данных (секреты, токены в логах)
+- Небезопасные права доступа к файлам
+- Отсутствие валидации ввода
 - SQL/NoSQL injection
-- SSRF and unsafe HTTP requests
+- SSRF и небезопасные HTTP-запросы
 
-## Output Format
+Для каждой находки убедись через `Read`, `Glob`, `Grep`, что уязвимость реальна
+в контексте всей кодовой базы, а не уже закрыта на другом уровне.
 
-For each finding, report:
-
-```
-### [SEC-NNN] Title
-- **Severity**: critical | warning
-- **File**: path/to/file.go:line
-- **Description**: What the vulnerability is
-- **Impact**: Potential impact if exploited
-- **Suggestion**: How to fix it
-```
-
-If no issues found, respond with "No security issues found."
+Вызови `submit_review` ровно один раз со всеми находками по завершении.

@@ -87,9 +87,6 @@ project_dir = "/path/to/your/project"
     "../prompt-examples/review-style.md",
   ]
 
-[output]
-  file_path          = "review-report.md"
-  format_project_dir = ""
 ```
 
 ### TOML Fields Reference
@@ -102,7 +99,7 @@ project_dir = "/path/to/your/project"
 
 #### `[env]`
 
-Arbitrary key-value pairs set as environment variables **before** provider/agent configs are loaded. Values are applied only if the variable is **not already set** in the environment. Useful for API keys referenced by `{env:...}` placeholders in `provider.json`.
+Arbitrary key-value pairs set as environment variables. Values override TOML config fields but do not override variables already set in the system environment. Priority: **system env > [env] > TOML fields**. Useful for API keys referenced by `{env:...}` placeholders in `provider.json`.
 
 #### `[opencode]`
 
@@ -132,13 +129,6 @@ Arbitrary key-value pairs set as environment variables **before** provider/agent
 | `agent_config_path` | — | Path to the agent system prompt file. Relative to the TOML file, or absolute. If not set, the built-in default prompt is used. |
 | `prompt_paths` | — | List of user prompt files. Each file starts a separate parallel review session. Relative to the TOML file, or absolute. If not set, the built-in default prompt is used for a single session. |
 
-#### `[output]`
-
-| Key | Default | Description |
-|---|---|---|
-| `file_path` | `review-report.md` | Output path for the review report. Relative to `project_dir`, or absolute. |
-| `format_project_dir` | — | If set, replaces `project_dir` in file paths shown in the report (useful for CI display). |
-
 ### Environment Variables
 
 All environment variables override their TOML counterparts when set.
@@ -161,8 +151,6 @@ All environment variables override their TOML counterparts when set.
 | `REVIEW_AGENT_CONFIG_PATH` | `pipeline.agent_config_path` | Path to agent prompt file (takes priority over inline). |
 | `REVIEW_AGENT_CONFIG` | `pipeline.agent_config_path` | Inline agent prompt text, or JSON with a `"prompt"` field. |
 | `REVIEW_PROMPT_PATHS` | `pipeline.prompt_paths` | Comma-separated paths to prompt files. Relative to CWD. |
-| `REVIEW_OUTPUT_FILE_PATH` | `output.file_path` | Report output path. |
-| `REVIEW_OUTPUT_FORMAT_PROJECT_DIR` | `output.format_project_dir` | Project dir substituted into report paths for display. |
 
 ### Priority Order
 
@@ -208,7 +196,7 @@ ENV variable  >  TOML value  >  built-in default (if any)
 
 #### `[env]` section
 
-The `[env]` section has the **lowest priority**. Values are applied only when the variable is not already set in the environment. It exists to supply defaults (e.g. API keys) without overriding real environment variables.
+The `[env]` section has **middle priority**: overrides TOML config fields, but is overridden by variables already set in the system environment. Priority: **system env > [env] > TOML fields**.
 
 ## Prompt System
 

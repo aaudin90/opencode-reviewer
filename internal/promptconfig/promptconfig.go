@@ -9,10 +9,14 @@ import (
 
 // Load resolves prompt file paths from REVIEW_PROMPT_PATHS env (comma-separated)
 // or from the tomlPaths list (resolved relative to configDir).
-// Returns empty slice if neither is set — pipeline will use default prompt.
+// Returns an error from the caller (pipeline) if neither is set.
 func Load(configDir string, tomlPaths []string) ([]string, error) {
 	if raw := os.Getenv("REVIEW_PROMPT_PATHS"); raw != "" {
-		return resolveAndValidate(splitPaths(raw), "")
+		cwd, err := os.Getwd()
+		if err != nil {
+			return nil, fmt.Errorf("get working directory: %w", err)
+		}
+		return resolveAndValidate(splitPaths(raw), cwd)
 	}
 	if len(tomlPaths) > 0 {
 		return resolveAndValidate(tomlPaths, configDir)
@@ -36,13 +40,9 @@ func resolveAndValidate(paths []string, baseDir string) ([]string, error) {
 	for _, p := range paths {
 		abs := p
 		if !filepath.IsAbs(p) {
-			if baseDir == "" {
-				abs = filepath.Clean(p)
-			} else {
-				abs = filepath.Join(baseDir, p)
-			}
+			abs = filepath.Join(baseDir, p)
 		}
-		if _, err := os.Stat(abs); err != nil { // #nosec G703 -- path from trusted config or env
+		if _, err := os.Stat(abs); err != nil { // #nosec G703 -- path from trusted config or env, no traversal risk
 			return nil, fmt.Errorf("prompt file %q: %w", abs, err)
 		}
 		result = append(result, abs)

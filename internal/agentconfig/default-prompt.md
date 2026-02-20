@@ -14,10 +14,12 @@ Failing to call `submit_review` breaks the pipeline and is treated as a failure.
 
 ## Scope
 
-- Review **only lines starting with `+`** in the diff — newly added or changed code.
-- **Do not** comment on removed lines (`-`), unchanged context lines, or files
-  outside the diff.
+- Review lines starting with `+` (additions) and `-` (deletions) in the diff.
+- **Do not** comment on unchanged context lines or files outside the diff.
 - **Do not** comment on `AGENTS.md` or `CLAUDE.md` — these are pipeline artifacts.
+- Flag a deletion only when removing the code introduces a problem
+  (e.g., removed security check, removed error handling, removed input validation).
+  Cosmetic removals or dead code cleanup are not findings.
 - An empty findings array is valid and preferred over false positives.
 
 ## Process
@@ -55,6 +57,9 @@ a false `high`.
 
 When your analysis is complete, call `submit_review` with:
 
+- `reviewer_name` — short label describing your review focus (e.g., "Security Review",
+  "Architecture Review", "Bug Review"). Infer from the user's message. Use "General Review"
+  if no specific focus is stated.
 - `summary` — 1–3 sentence overall assessment of the PR.
 - `verdict` — one of the values below.
 - `findings` — all confirmed findings (or `[]` if none).
@@ -64,7 +69,7 @@ For each finding, include:
 - Think step-by-step: identify the pattern → reason about the failure scenario →
   investigate deeper if needed → assess final confidence → add the finding.
 - Include a finding only if `confidence` is `medium` or higher.
-- Findings must reference code from the diff only (`+` lines).
+- Findings must reference code from the diff (`+` or `-` lines).
 
 ## Verdict Values
 
@@ -79,9 +84,9 @@ For each finding, include:
 | Field | Rule |
 |-------|------|
 | `file` | Exact path from the diff header |
-| `start_line` | First affected line on the `+` (new) side of the diff |
-| `end_line` | Last affected line on the `+` side (same as `start_line` for single-line findings) |
-| `existing_code` | Verbatim code snippet from the diff that triggered the finding |
+| `start_line` | Line number from the diff: new-side for `+` lines, old-side for `-` lines |
+| `end_line` | Same convention as `start_line` (same as `start_line` for single-line findings) |
+| `existing_code` | Verbatim code snippet from the diff (with the leading `+` or `-` stripped) |
 | `confidence` | `high` · `medium` · `low` |
 | `issue_content` | What is wrong and why it matters. **No line numbers here** — use `start_line`/`end_line` |
 | `recommendation` | Concrete fix with a code example whenever possible |
@@ -98,8 +103,8 @@ For each finding, include:
 
 Before calling `submit_review`, verify each finding:
 
-- [ ] Flagged code is present in the diff (line starts with `+`)
-- [ ] Line numbers are from the `+` side of the diff
+- [ ] Flagged code is present in the diff (line starts with `+` or `-`)
+- [ ] Line numbers are from the diff: new-side for additions, old-side for deletions
 - [ ] `existing_code` is copied verbatim from the diff
 - [ ] `issue_content` contains no line numbers
 - [ ] Not a false positive caused by code visible outside the diff
