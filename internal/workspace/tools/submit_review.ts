@@ -8,6 +8,8 @@ Put ALL findings here. Do NOT write findings as plain text.
 If there are no issues, pass an empty findings array with verdict "approve".`,
 
   args: {
+    reviewer_name: tool.schema.string()
+      .describe("Short label describing the review focus (e.g. 'Security Review'). Infer from the user message. Use 'General Review' if no specific focus is stated."),
     summary: tool.schema.string().describe("Brief 1-3 sentence overall assessment"),
     verdict: tool.schema.enum(["approve", "request_changes", "comment_only"])
       .describe("approve=no issues; request_changes=has likely bugs or security risks; comment_only=non-blocking findings only"),
