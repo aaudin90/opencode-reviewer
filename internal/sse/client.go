@@ -1,0 +1,129 @@
+package sse
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+)
+
+// Client reads SSE events from an opencode serve endpoint.
+type Client struct {
+	httpClient *http.Client
+	url        string
+}
+
+// New creates a new SSE client that connects to baseURL/event.
+func New(httpClient *http.Client, baseURL string) *Client {
+	return &Client{
+		httpClient: httpClient,
+		url:        strings.TrimRight(baseURL, "/") + "/event",
+	}
+}
+
+// WaitForToolResult connects to the SSE /event endpoint and waits for a
+// status="completed" event for the given toolName within the given sessionID.
+// Returns the raw JSON input of the tool call.
+// events receives all completed tool call events as they arrive; it is closed
+// before WaitForToolResult returns. Pass nil to disable event forwarding.
+func (c *Client) WaitForToolResult(ctx context.Context, sessionID, toolName string, events chan<- ToolCall) (json.RawMessage, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build sse request: %w", err)
+	}
+	req.Header.Set("Accept", "text/event-stream")
+
+	resp, err := c.httpClient.Do(req) // #nosec G704 -- URL from trusted config
+	if err != nil {
+		return nil, fmt.Errorf("connect to sse: %w", err)
+	}
+	defer resp.Body.Close()
+
+	return parseStream(resp.Body, sessionID, toolName, events)
+}
+
+// parseStream reads SSE events from r and returns the input of the first
+// tool call event with status="completed" matching sessionID and toolName.
+// This is a pure function that can be tested with strings.NewReader.
+func parseStream(
+	r io.Reader,
+	sessionID, toolName string,
+	events chan<- ToolCall,
+) (json.RawMessage, error) {
+	if events != nil {
+		defer close(events)
+	}
+
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 1<<20), 1<<20) // 1 MB buffer for large findings
+
+	var dataLines []string
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		switch {
+		case strings.HasPrefix(line, "event:"):
+			// ignore event: lines — we check type field in JSON instead
+		case strings.HasPrefix(line, "data:"):
+			dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+		case line == "":
+			if len(dataLines) > 0 {
+				raw := []byte(strings.Join(dataLines, ""))
+				var event toolCallEvent
+				if err := json.Unmarshal(raw, &event); err == nil {
+					trySendToolCall(&event, events)
+					if args, ok := extractToolArgs(&event, sessionID, toolName); ok {
+						return args, nil
+					}
+				}
+			}
+			dataLines = dataLines[:0]
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("sse stream read error: %w", err)
+	}
+
+	return nil, fmt.Errorf("sse stream ended without %q tool result for session %q", toolName, sessionID)
+}
+
+// trySendToolCall sends a completed tool call event to the channel (non-blocking).
+func trySendToolCall(event *toolCallEvent, events chan<- ToolCall) {
+	if events == nil {
+		return
+	}
+	part := event.Properties.Part
+	if part.Type == "tool" && part.State.Status == "completed" {
+		select {
+		case events <- ToolCall{Tool: part.Tool, SessionID: part.SessionID, Input: part.State.Input}:
+		default:
+		}
+	}
+}
+
+// extractToolArgs returns the tool input if the event matches the expected
+// sessionID, toolName, and status="completed".
+func extractToolArgs(event *toolCallEvent, sessionID, toolName string) (json.RawMessage, bool) {
+	part := event.Properties.Part
+	if part.Type != "tool" {
+		return nil, false
+	}
+
+	if part.Tool != toolName {
+		return nil, false
+	}
+
+	if part.SessionID != sessionID {
+		return nil, false
+	}
+
+	if part.State.Status != "completed" {
+		return nil, false
+	}
+
+	return part.State.Input, true
+}

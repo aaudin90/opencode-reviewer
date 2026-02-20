@@ -2,9 +2,9 @@ package pipeline
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
-	"os"
 
 	"github.com/aaudin90/opencode-reviewer/internal/agentsmd"
 	"github.com/aaudin90/opencode-reviewer/internal/diff"
@@ -21,21 +21,18 @@ type Pipeline struct {
 	branch     string
 	baseBranch string
 	runner     *runner.Runner
-	outputPath string
 }
 
 func New(
 	gitClient *git.Client,
 	branch, baseBranch string,
 	r *runner.Runner,
-	outputPath string,
 ) *Pipeline {
 	return &Pipeline{
 		gitClient:  gitClient,
 		branch:     branch,
 		baseBranch: baseBranch,
 		runner:     r,
-		outputPath: outputPath,
 	}
 }
 
@@ -43,11 +40,7 @@ func (p *Pipeline) Run(ctx context.Context) (*models.ReviewResult, error) {
 	if err := p.prepareBranch(); err != nil {
 		return nil, fmt.Errorf("prepare branch: %w", err)
 	}
-
 	slog.Info("repository prepared for review")
-
-	// defer clean right after prepareBranch to ensure cleanup
-	// even if prepareDiff or Swap fails
 	defer func() {
 		if cleanErr := p.gitClient.Clean(); cleanErr != nil {
 			slog.Error("failed to clean working tree", "error", cleanErr)
@@ -58,52 +51,82 @@ func (p *Pipeline) Run(ctx context.Context) (*models.ReviewResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("prepare diff: %w", err)
 	}
-
 	slog.Info("diff context ready", "path", diffPath)
 
-	swapper := agentsmd.NewSwapper(p.gitClient.Dir())
-	swapped, err := swapper.Swap()
-	if err != nil {
+	if err := p.swapAgentsMD(); err != nil {
 		return nil, fmt.Errorf("swap agents.md: %w", err)
 	}
 
-	slog.Info("AGENTS.md and CLAUDE.md swapped for review", "overwritten", swapped)
+	runResult, err := p.runReview(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("run review: %w", err)
+	}
 
+	return p.parseResult(runResult), nil
+}
+
+func (p *Pipeline) swapAgentsMD() error {
+	swapper := agentsmd.NewSwapper(p.gitClient.Dir())
+	swapped, err := swapper.Swap()
+	if err != nil {
+		return err
+	}
+	slog.Info("AGENTS.md and CLAUDE.md swapped for review", "overwritten", swapped)
+	return nil
+}
+
+func (p *Pipeline) runReview(ctx context.Context) (*runner.RunResult, error) {
 	if err := p.runner.StartServe(ctx); err != nil {
 		return nil, fmt.Errorf("start serve: %w", err)
 	}
 	defer p.runner.StopServe()
 
-	raw, err := p.runner.Run(ctx, runner.RunRequest{
-		Prompt: reviewPrompt,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("run review: %w", err)
+	var runResult *runner.RunResult
+	for event := range p.runner.Run(ctx, runner.RunRequest{Prompt: reviewPrompt, ToolName: "submit_review"}) {
+		switch {
+		case event.Err != nil:
+			return nil, fmt.Errorf("run review: %w", event.Err)
+		case event.ToolCall != nil:
+			tc := event.ToolCall
+			slog.Debug("tool call", "tool", tc.Tool, "session", tc.SessionID, "args", string(tc.Input))
+		case event.Final != nil:
+			runResult = event.Final
+		}
 	}
+	if runResult == nil {
+		return nil, fmt.Errorf("no result received")
+	}
+	return runResult, nil
+}
 
-	reviewResult := review.Parse(raw)
-	if reviewResult.ParseErr != nil {
-		slog.Warn("failed to parse agent response as JSON", "error", reviewResult.ParseErr)
+func (p *Pipeline) parseResult(runResult *runner.RunResult) *models.ReviewResult {
+	var reviewResult *models.ReviewResult
+	var outputBytes []byte
+
+	if runResult.ToolArgs != nil {
+		reviewResult = review.ParseToolArgs(runResult.ToolArgs)
+		outputBytes = runResult.ToolArgs
 	} else {
-		slog.Info("review parsed", "findings", len(reviewResult.Findings))
+		slog.Warn("using text fallback for review result")
+		reviewResult = review.Parse(runResult.FallbackText)
+		outputBytes = []byte(runResult.FallbackText)
 	}
 
-	fmt.Println()
-	fmt.Println("════════════════════════════════════════")
-	fmt.Println("  Review Result")
-	fmt.Println("════════════════════════════════════════")
-	fmt.Println()
-	fmt.Println(raw)
-	fmt.Println()
-	fmt.Println("════════════════════════════════════════")
-
-	if err := os.WriteFile(p.outputPath, []byte(raw), 0o600); err != nil {
-		return nil, fmt.Errorf("write output: %w", err)
+	if reviewResult.ParseErr != nil {
+		slog.Warn("failed to parse review result", "error", reviewResult.ParseErr)
 	}
 
-	slog.Info("review output written", "path", p.outputPath)
+	prettyBytes := outputBytes
+	if runResult.ToolArgs != nil {
+		if b, jsonErr := json.MarshalIndent(json.RawMessage(outputBytes), "", "  "); jsonErr == nil {
+			prettyBytes = b
+		}
+	}
+	slog.Debug("intermediate review result", "result", string(prettyBytes))
 
-	return reviewResult, nil
+	slog.Info("review completed", "verdict", reviewResult.Verdict, "findings", len(reviewResult.Findings))
+
+	return reviewResult
 }
 
 func (p *Pipeline) prepareDiff() (string, error) {

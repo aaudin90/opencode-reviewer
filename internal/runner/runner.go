@@ -15,16 +15,24 @@ import (
 	"time"
 
 	"github.com/aaudin90/opencode-reviewer/internal/config"
+	"github.com/aaudin90/opencode-reviewer/internal/sse"
 	"github.com/aaudin90/opencode-reviewer/internal/workspace"
 )
 
+type sseResult struct {
+	data json.RawMessage
+	err  error
+}
+
 const (
-	defaultPort        = 4096
-	healthPollInterval = 500 * time.Millisecond
-	healthTimeout      = 30 * time.Second
-	stopGracePeriod    = 10 * time.Second
-	abortTimeout       = 5 * time.Second
-	agentName          = "reviewer"
+	defaultPort         = 4096
+	healthPollInterval  = 500 * time.Millisecond
+	healthTimeout       = 30 * time.Second
+	stopGracePeriod     = 10 * time.Second
+	abortTimeout        = 5 * time.Second
+	agentName           = "reviewer"
+	maxToolCallRetries  = 3
+	toolCallWaitTimeout = 3 * time.Second
 )
 
 // Runner manages an opencode serve subprocess and HTTP interaction.
@@ -110,44 +118,126 @@ func (r *Runner) StartServe(ctx context.Context) error {
 	return nil
 }
 
-// Run executes a single review: creates a session, sends the prompt, and returns the response text.
-func (r *Runner) Run(ctx context.Context, req RunRequest) (string, error) {
-	timeout := time.Duration(r.cfg.StageTimeout) * time.Second
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+func retryPromptFor(toolName string) string {
+	return fmt.Sprintf(
+		"You did not call the `%s` tool. "+
+			"You MUST call it now with all your findings. Do not output text — use the tool.",
+		toolName,
+	)
+}
+
+// Run executes a single review and streams events on the returned channel.
+// The channel is closed after the final event (RunEvent.Final or RunEvent.Err).
+func (r *Runner) Run(ctx context.Context, req RunRequest) <-chan RunEvent {
+	ch := make(chan RunEvent, 64)
+	go func() {
+		defer close(ch)
+		r.run(ctx, req, ch)
+	}()
+	return ch
+}
+
+// run is the internal implementation of Run. It attempts to obtain a
+// submit_review tool call via SSE up to maxToolCallRetries times, then falls
+// back to text extraction.
+func (r *Runner) run(ctx context.Context, req RunRequest, out chan<- RunEvent) {
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(r.cfg.StageTimeout)*time.Second)
 	defer cancel()
 
 	sessionID, err := r.createSession(ctx)
 	if err != nil {
-		return "", fmt.Errorf("create session: %w", err)
+		out <- RunEvent{Err: fmt.Errorf("create session: %w", err)}
+		return
 	}
-
 	slog.Info("session created", "id", sessionID)
 
-	resp, err := r.sendMessage(ctx, sessionID, req)
-	if err != nil {
-		if ctx.Err() != nil {
-			slog.Warn("request timed out, aborting session", "id", sessionID)
-			_ = r.abortSession(sessionID)
+	sseClient := sse.New(r.httpClient, r.baseURL)
+	var lastResp *messageResponse
+
+	for attempt := range maxToolCallRetries {
+		attemptCtx, attemptCancel := context.WithCancel(ctx)
+
+		prompt := req.Prompt
+		if attempt > 0 {
+			prompt = retryPromptFor(req.ToolName)
+			slog.Warn("retrying tool call", "tool", req.ToolName, "attempt", attempt)
 		}
-		r.cleanupSession(sessionID)
-		return "", fmt.Errorf("send message: %w", err)
+
+		// SSE goroutine starts BEFORE sendMessage to avoid missing the event.
+		events := make(chan sse.ToolCall, 256)
+		sseCh := make(chan sseResult, 1)
+		go func() {
+			data, sseErr := sseClient.WaitForToolResult(attemptCtx, sessionID, req.ToolName, events)
+			sseCh <- sseResult{data, sseErr}
+		}()
+
+		resp, err := r.sendMessage(ctx, sessionID, RunRequest{Prompt: prompt})
+		if err != nil {
+			attemptCancel()
+			if ctx.Err() != nil {
+				slog.Warn("request timed out, aborting session", "id", sessionID)
+				_ = r.abortSession(sessionID)
+			}
+			r.cleanupSession(sessionID)
+			out <- RunEvent{Err: fmt.Errorf("send message: %w", err)}
+			return
+		}
+		lastResp = resp
+
+		t := resp.Info.Tokens
+		slog.Info("message completed", "message", resp.Info.ID, "cost", resp.Info.Cost,
+			"tokens_input", t.Input, "tokens_output", t.Output)
+
+		// After sendMessage completes, the tool call event should already be buffered.
+		// Wait toolCallWaitTimeout — if the agent called the tool the goroutine returns immediately.
+		select {
+		case res := <-sseCh:
+			attemptCancel()
+			// Drain all tool call events (channel is already closed by WaitForToolResult).
+			for tc := range events {
+				out <- RunEvent{ToolCall: &tc}
+			}
+			if res.err == nil {
+				r.cleanupSession(sessionID)
+				slog.Info("review completed via tool call", "session", sessionID, "tool", req.ToolName, "attempt", attempt)
+				out <- RunEvent{Final: &RunResult{ToolArgs: res.data}}
+				return
+			}
+			slog.Warn("agent did not call tool", "tool", req.ToolName, "attempt", attempt, "err", res.err)
+		case <-time.After(toolCallWaitTimeout):
+			attemptCancel()
+			slog.Warn("tool call wait timeout, agent likely did not call tool", "tool", req.ToolName, "attempt", attempt)
+		case <-ctx.Done():
+			attemptCancel()
+			_ = r.abortSession(sessionID)
+			r.cleanupSession(sessionID)
+			out <- RunEvent{Err: fmt.Errorf("stage timeout: %w", ctx.Err())}
+			return
+		}
 	}
 
+	// Fallback: agent did not call the tool after all retries — use text response.
+	slog.Warn("all tool call retries exhausted, falling back to text output",
+		"tool", req.ToolName, "session", sessionID)
 	r.cleanupSession(sessionID)
 
-	result := r.extractText(resp.Parts)
-	t := resp.Info.Tokens
-	slog.Info("review completed",
-		"message", resp.Info.ID,
-		"length", len(result),
-		"cost", resp.Info.Cost,
-		"tokens_input", t.Input,
-		"tokens_output", t.Output,
-		"tokens_reasoning", t.Reasoning,
-		"tokens_cache_read", t.Cache.Read,
-		"tokens_cache_write", t.Cache.Write,
-	)
-	return result, nil
+	fallbackText := ""
+	if lastResp != nil {
+		fallbackText = r.extractText(lastResp.Parts)
+		t := lastResp.Info.Tokens
+		slog.Info("review completed via text fallback",
+			"message", lastResp.Info.ID,
+			"length", len(fallbackText),
+			"cost", lastResp.Info.Cost,
+			"tokens_input", t.Input,
+			"tokens_output", t.Output,
+			"tokens_reasoning", t.Reasoning,
+			"tokens_cache_read", t.Cache.Read,
+			"tokens_cache_write", t.Cache.Write,
+		)
+	}
+
+	out <- RunEvent{Final: &RunResult{FallbackText: fallbackText}}
 }
 
 // StopServe gracefully stops the opencode serve subprocess.

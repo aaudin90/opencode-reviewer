@@ -6,4 +6,6 @@ type ReviewResult struct {
 	Raw      string
 	Findings []Finding
 	ParseErr error
+	Summary  string // from submit_review tool args
+	Verdict  string // "approve" | "request_changes" | "comment_only"
 }

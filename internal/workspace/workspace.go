@@ -13,6 +13,7 @@ const (
 	agentName       = "reviewer"
 	opencodeSubdir  = "opencode"
 	agentsDir       = "opencode/agents"
+	toolsDir        = "opencode/tools"
 )
 
 // Workspace manages a temporary directory used as XDG_CONFIG_HOME for opencode.
@@ -21,8 +22,8 @@ type Workspace struct {
 	dir string
 }
 
-// New creates a temporary workspace directory containing opencode.json
-// and agents/reviewer.md based on the provided config.
+// New creates a temporary workspace directory containing opencode.json,
+// agents/reviewer.md, and tools/submit_review.ts based on the provided config.
 func New(cfg Config) (*Workspace, error) {
 	dir, err := os.MkdirTemp("", "opencode-review-*")
 	if err != nil {
@@ -45,6 +46,17 @@ func New(cfg Config) (*Workspace, error) {
 	if err := os.WriteFile(configPath, configData, 0o600); err != nil {
 		_ = os.RemoveAll(dir)
 		return nil, fmt.Errorf("write opencode.json: %w", err)
+	}
+
+	toolsPath := filepath.Join(dir, toolsDir)
+	if err := os.MkdirAll(toolsPath, 0o750); err != nil {
+		_ = os.RemoveAll(dir)
+		return nil, fmt.Errorf("create tools dir: %w", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(toolsPath, "submit_review.ts"), submitReviewTS, 0o600); err != nil {
+		_ = os.RemoveAll(dir)
+		return nil, fmt.Errorf("write submit_review.ts: %w", err)
 	}
 
 	if cfg.AgentPrompt != "" {

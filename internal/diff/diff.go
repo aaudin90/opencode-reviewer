@@ -73,16 +73,16 @@ func WriteContextFile(result *Result, projectDir string) (string, error) {
 
 	var b strings.Builder
 
-	b.WriteString(fmt.Sprintf("# Code Review: %s → %s\n\n", result.Branch, result.BaseBranch))
+	fmt.Fprintf(&b, "# Code Review: %s → %s\n\n", result.Branch, result.BaseBranch)
 
 	// Summary
 	b.WriteString("## Summary\n\n")
-	b.WriteString(fmt.Sprintf("- **Branch:** %s\n", result.Branch))
-	b.WriteString(fmt.Sprintf("- **Base:** %s\n", result.BaseBranch))
-	b.WriteString(fmt.Sprintf("- **Files changed:** %d\n", len(result.Files)))
-	b.WriteString(fmt.Sprintf("- **Lines added:** %d\n", result.TotalAdded))
-	b.WriteString(fmt.Sprintf("- **Lines deleted:** %d\n", result.TotalDeleted))
-	b.WriteString(fmt.Sprintf("- **Estimated tokens:** %d\n", EstimateTokens(result)))
+	fmt.Fprintf(&b, "- **Branch:** %s\n", result.Branch)
+	fmt.Fprintf(&b, "- **Base:** %s\n", result.BaseBranch)
+	fmt.Fprintf(&b, "- **Files changed:** %d\n", len(result.Files))
+	fmt.Fprintf(&b, "- **Lines added:** %d\n", result.TotalAdded)
+	fmt.Fprintf(&b, "- **Lines deleted:** %d\n", result.TotalDeleted)
+	fmt.Fprintf(&b, "- **Estimated tokens:** %d\n", EstimateTokens(result))
 	b.WriteString("\n")
 
 	// Commit log
@@ -101,7 +101,7 @@ func WriteContextFile(result *Result, projectDir string) (string, error) {
 		if f.Language != "" {
 			lang = " [" + f.Language + "]"
 		}
-		b.WriteString(fmt.Sprintf("- %s `%s`%s (+%d/-%d)\n", icon, f.Path, lang, f.Added, f.Deleted))
+		fmt.Fprintf(&b, "- %s `%s`%s (+%d/-%d)\n", icon, f.Path, lang, f.Added, f.Deleted)
 	}
 	b.WriteString("\n")
 
@@ -109,7 +109,7 @@ func WriteContextFile(result *Result, projectDir string) (string, error) {
 	if len(result.FilteredFiles) > 0 {
 		b.WriteString("## Filtered Files (noise)\n\n")
 		for _, f := range result.FilteredFiles {
-			b.WriteString(fmt.Sprintf("- `%s`\n", f))
+			fmt.Fprintf(&b, "- `%s`\n", f)
 		}
 		b.WriteString("\n")
 	}
@@ -118,11 +118,11 @@ func WriteContextFile(result *Result, projectDir string) (string, error) {
 	b.WriteString("## Diffs\n\n")
 	for _, f := range result.Files {
 		if f.OldPath != "" && f.OldPath != f.Path {
-			b.WriteString(fmt.Sprintf("<file path=%q old_path=%q language=%q change_type=%q>\n",
-				f.Path, f.OldPath, f.Language, f.ChangeType))
+			fmt.Fprintf(&b, "<file path=%q old_path=%q language=%q change_type=%q>\n",
+				f.Path, f.OldPath, f.Language, f.ChangeType)
 		} else {
-			b.WriteString(fmt.Sprintf("<file path=%q language=%q change_type=%q>\n",
-				f.Path, f.Language, f.ChangeType))
+			fmt.Fprintf(&b, "<file path=%q language=%q change_type=%q>\n",
+				f.Path, f.Language, f.ChangeType)
 		}
 		b.WriteString(stripDiffHeaders(f.Diff))
 		if !strings.HasSuffix(f.Diff, "\n") {
