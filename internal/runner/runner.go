@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -47,24 +49,20 @@ type Runner struct {
 }
 
 // New creates a Runner for the given config and working directory.
+// For subprocess mode (cfg.Endpoint == ""), baseURL is set in StartServe after
+// a free port is allocated; cfg.Port is used as a hint (or default 4096 as fallback).
 func New(cfg config.OpenCodeConfig, workDir string, ws *workspace.Workspace) *Runner {
-	baseURL := cfg.Endpoint
-	if baseURL == "" {
-		port := cfg.Port
-		if port == 0 {
-			port = defaultPort
-		}
-		baseURL = fmt.Sprintf("http://localhost:%d", port)
-	}
-
-	return &Runner{
+	r := &Runner{
 		cfg:        cfg,
 		workDir:    workDir,
 		ws:         ws,
 		httpClient: &http.Client{},
-		baseURL:    strings.TrimRight(baseURL, "/"),
 		procDone:   make(chan error, 1),
 	}
+	if cfg.Endpoint != "" {
+		r.baseURL = strings.TrimRight(cfg.Endpoint, "/")
+	}
+	return r
 }
 
 // StartServe starts the opencode serve subprocess and waits until it is healthy.
@@ -77,21 +75,28 @@ func (r *Runner) StartServe(ctx context.Context) error {
 		return r.waitHealthy(healthCtx, nil)
 	}
 
-	cmd := exec.CommandContext(ctx, r.cfg.Binary, "serve") // #nosec G204 -- binary from trusted config
+	port, err := allocatePort(r.cfg.Port)
+	if err != nil {
+		return fmt.Errorf("allocate port: %w", err)
+	}
+	r.baseURL = fmt.Sprintf("http://localhost:%d", port)
+
+	cmd := exec.CommandContext(ctx, r.cfg.Binary, "serve", "--port", strconv.Itoa(port)) // #nosec G204 -- binary from trusted config
 	cmd.Dir = r.workDir
 	cmd.Env = os.Environ()
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // isolate into its own process group
 	if r.ws != nil {
 		cmd.Env = append(cmd.Env,
 			"XDG_CONFIG_HOME="+r.ws.Dir(),
 		)
-		slog.Debug("workspace env vars set",
+		slog.Info("workspace configured",
 			"XDG_CONFIG_HOME", r.ws.Dir(),
 		)
 	}
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 
-	slog.Info("starting opencode serve", "binary", r.cfg.Binary, "workDir", r.workDir)
+	slog.Info("starting opencode serve", "binary", r.cfg.Binary, "workDir", r.workDir, "port", port)
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start opencode serve: %w", err)
@@ -171,6 +176,16 @@ func (r *Runner) run(ctx context.Context, req RunRequest, out chan<- RunEvent) {
 			sseCh <- sseResult{data, sseErr}
 		}()
 
+		// Forward tool call events immediately as they arrive.
+		tcDone := make(chan struct{})
+		go func() {
+			defer close(tcDone)
+			for tc := range events {
+				slog.Info("tool call", "tool", tc.Tool, "session", sessionID, "args", string(tc.Input))
+				out <- RunEvent{ToolCall: &tc}
+			}
+		}()
+
 		resp, err := r.sendMessage(ctx, sessionID, RunRequest{Prompt: prompt})
 		if err != nil {
 			attemptCancel()
@@ -193,10 +208,7 @@ func (r *Runner) run(ctx context.Context, req RunRequest, out chan<- RunEvent) {
 		select {
 		case res := <-sseCh:
 			attemptCancel()
-			// Drain all tool call events (channel is already closed by WaitForToolResult).
-			for tc := range events {
-				out <- RunEvent{ToolCall: &tc}
-			}
+			<-tcDone
 			if res.err == nil {
 				cost, tokens, statsErr := r.getSessionStats(sessionID)
 				r.cleanupSession(sessionID)
@@ -216,9 +228,11 @@ func (r *Runner) run(ctx context.Context, req RunRequest, out chan<- RunEvent) {
 			slog.Warn("agent did not call tool", "tool", req.ToolName, "attempt", attempt, "err", res.err)
 		case <-time.After(toolCallWaitTimeout):
 			attemptCancel()
+			<-tcDone
 			slog.Warn("tool call wait timeout, agent likely did not call tool", "tool", req.ToolName, "attempt", attempt)
 		case <-ctx.Done():
 			attemptCancel()
+			<-tcDone
 			_ = r.abortSession(sessionID)
 			r.cleanupSession(sessionID)
 			out <- RunEvent{Err: fmt.Errorf("stage timeout: %w", ctx.Err())}
@@ -258,14 +272,16 @@ func (r *Runner) StopServe() {
 
 	slog.Info("stopping opencode serve")
 
-	_ = r.proc.Process.Signal(syscall.SIGINT)
+	// Send SIGINT to the entire process group so child processes are also signalled.
+	_ = syscall.Kill(-r.proc.Process.Pid, syscall.SIGINT)
 
 	select {
 	case <-r.procDone:
 		slog.Info("opencode serve stopped gracefully")
 	case <-time.After(stopGracePeriod):
 		slog.Warn("opencode serve did not stop in time, sending SIGKILL")
-		_ = r.proc.Process.Kill()
+		// Kill the entire process group to ensure no orphan children remain.
+		_ = syscall.Kill(-r.proc.Process.Pid, syscall.SIGKILL)
 		<-r.procDone
 	}
 }
@@ -330,9 +346,13 @@ func (r *Runner) createSession(ctx context.Context) (string, error) {
 }
 
 func (r *Runner) sendMessage(ctx context.Context, sessionID string, runReq RunRequest) (*messageResponse, error) {
+	agent := runReq.AgentName
+	if agent == "" {
+		agent = agentName
+	}
 	body := messageRequest{
 		Parts: []messagePart{{Type: "text", Text: runReq.Prompt}},
-		Agent: agentName,
+		Agent: agent,
 		Model: parseModel(r.cfg.Model),
 	}
 
@@ -453,4 +473,20 @@ func (r *Runner) extractText(parts []messagePart) string {
 		}
 	}
 	return sb.String()
+}
+
+// allocatePort returns a free TCP port. If hint > 0 it is returned as-is
+// (caller-configured port, no dynamic allocation). Otherwise a free ephemeral
+// port is obtained from the OS; falls back to defaultPort on error.
+func allocatePort(hint int) (int, error) {
+	if hint > 0 {
+		return hint, nil
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, fmt.Errorf("find free port: %w", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close()
+	return port, nil
 }

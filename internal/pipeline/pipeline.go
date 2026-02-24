@@ -15,30 +15,40 @@ import (
 	"github.com/aaudin90/opencode-reviewer/internal/runner"
 )
 
-type Pipeline struct {
-	gitClient   *git.Client
-	branch      string
-	baseBranch  string
-	runner      *runner.Runner
-	promptPaths []string // resolved absolute paths; must be non-empty
+// Config holds all parameters needed to construct a Pipeline.
+type Config struct {
+	GitClient       *git.Client
+	Branch          string
+	BaseBranch      string
+	Runner          *runner.Runner
+	FinalizerRunner *runner.Runner
+	PromptPaths     []string
+	FinalizerPrompt string
 }
 
-func New(
-	gitClient *git.Client,
-	branch, baseBranch string,
-	r *runner.Runner,
-	promptPaths []string,
-) *Pipeline {
+type Pipeline struct {
+	gitClient       *git.Client
+	branch          string
+	baseBranch      string
+	runner          *runner.Runner
+	finalizerRunner *runner.Runner
+	promptPaths     []string // resolved absolute paths; must be non-empty
+	finalizerPrompt string
+}
+
+func New(cfg Config) *Pipeline {
 	return &Pipeline{
-		gitClient:   gitClient,
-		branch:      branch,
-		baseBranch:  baseBranch,
-		runner:      r,
-		promptPaths: promptPaths,
+		gitClient:       cfg.GitClient,
+		branch:          cfg.Branch,
+		baseBranch:      cfg.BaseBranch,
+		runner:          cfg.Runner,
+		finalizerRunner: cfg.FinalizerRunner,
+		promptPaths:     cfg.PromptPaths,
+		finalizerPrompt: cfg.FinalizerPrompt,
 	}
 }
 
-func (p *Pipeline) Run(ctx context.Context) ([]*models.ReviewResult, error) {
+func (p *Pipeline) Run(ctx context.Context) (*models.FinalReview, error) {
 	if err := p.prepareBranch(); err != nil {
 		return nil, fmt.Errorf("prepare branch: %w", err)
 	}
@@ -59,12 +69,25 @@ func (p *Pipeline) Run(ctx context.Context) ([]*models.ReviewResult, error) {
 		return nil, fmt.Errorf("swap agents.md: %w", err)
 	}
 
-	results, err := p.runAllReviews(ctx)
+	// Phase 1: parallel reviewer sessions.
+	if err := p.runner.StartServe(ctx); err != nil {
+		return nil, fmt.Errorf("start reviewer serve: %w", err)
+	}
+	//phase1Results := make([]*models.ReviewResult, 0) //p.runAllReviews(ctx)
+	phase1Results := p.runAllReviews(ctx)
+	p.runner.StopServe()
+
+	// Phase 2: finalizer consolidation.
+	if err := p.finalizerRunner.StartServe(ctx); err != nil {
+		return nil, fmt.Errorf("start finalizer serve: %w", err)
+	}
+	writtenReview, err := p.runFinalizerReview(ctx, phase1Results)
+	p.finalizerRunner.StopServe()
 	if err != nil {
-		return nil, fmt.Errorf("run reviews: %w", err)
+		return nil, fmt.Errorf("finalizer review: %w", err)
 	}
 
-	return results, nil
+	return writtenReview, nil
 }
 
 func (p *Pipeline) swapAgentsMD() error {
@@ -77,14 +100,12 @@ func (p *Pipeline) swapAgentsMD() error {
 	return nil
 }
 
-func (p *Pipeline) runAllReviews(ctx context.Context) ([]*models.ReviewResult, error) {
-	if err := p.runner.StartServe(ctx); err != nil {
-		return nil, fmt.Errorf("start serve: %w", err)
-	}
-	defer p.runner.StopServe()
-
+// runAllReviews runs all Phase 1 reviewer sessions in parallel.
+// Failed sessions are logged but do not stop the pipeline.
+func (p *Pipeline) runAllReviews(ctx context.Context) []*models.ReviewResult {
 	if len(p.promptPaths) == 0 {
-		return nil, fmt.Errorf("no prompt paths configured: set pipeline.prompt_paths in config or REVIEW_PROMPT_PATHS env")
+		slog.Error("no prompt paths configured: set pipeline.prompt_paths in config or REVIEW_PROMPT_PATHS env")
+		return nil
 	}
 
 	resultsCh := make(chan promptRunResult, len(p.promptPaths))
@@ -112,7 +133,7 @@ func (p *Pipeline) runAllReviews(ctx context.Context) ([]*models.ReviewResult, e
 		results = append(results, r.result)
 	}
 
-	return results, nil
+	return results
 }
 
 func (p *Pipeline) runSingleReview(ctx context.Context, promptPath string) (*models.ReviewResult, error) {
@@ -121,13 +142,16 @@ func (p *Pipeline) runSingleReview(ctx context.Context, promptPath string) (*mod
 		return nil, err
 	}
 	var runResult *runner.RunResult
-	for event := range p.runner.Run(ctx, runner.RunRequest{Prompt: prompt, ToolName: "submit_review", PromptPath: promptPath}) {
+	for event := range p.runner.Run(ctx, runner.RunRequest{
+		Prompt:     prompt,
+		ToolName:   "submit_review",
+		PromptPath: promptPath,
+		AgentName:  "reviewer",
+	}) {
 		switch {
 		case event.Err != nil:
 			return nil, fmt.Errorf("run review: %w", event.Err)
 		case event.ToolCall != nil:
-			tc := event.ToolCall
-			slog.Debug("tool call", "tool", tc.Tool, "session", tc.SessionID, "args", string(tc.Input))
 		case event.Final != nil:
 			runResult = event.Final
 		}
@@ -136,6 +160,52 @@ func (p *Pipeline) runSingleReview(ctx context.Context, promptPath string) (*mod
 		return nil, fmt.Errorf("no result received")
 	}
 	return p.parseResult(runResult), nil
+}
+
+func (p *Pipeline) runFinalizerReview(ctx context.Context, phase1Results []*models.ReviewResult) (*models.FinalReview, error) {
+	serialized, err := json.MarshalIndent(phase1Results, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("marshal phase1 results: %w", err)
+	}
+	userMessage := p.finalizerPrompt + "\n\n## Phase 1 Results\n\n```json\n" + string(serialized) + "\n```"
+
+	var runResult *runner.RunResult
+	for event := range p.finalizerRunner.Run(ctx, runner.RunRequest{
+		Prompt:     userMessage,
+		ToolName:   "submit_final_review",
+		PromptPath: "finalizer",
+		AgentName:  "reviewer", // TODO 79400
+	}) {
+		switch {
+		case event.Err != nil:
+			return nil, fmt.Errorf("finalizer session: %w", event.Err)
+		case event.ToolCall != nil:
+		case event.Final != nil:
+			runResult = event.Final
+		}
+	}
+
+	if runResult == nil {
+		return nil, fmt.Errorf("finalizer: no result received")
+	}
+
+	if runResult.ToolArgs != nil {
+		result := review.ParseFinalToolArgs(runResult.ToolArgs)
+		if result.ParseErr != nil {
+			slog.Warn("failed to parse written review", "error", result.ParseErr)
+		}
+		slog.Info("finalizer review completed",
+			"verdict", result.Verdict,
+			"findings", len(result.Findings),
+		)
+		if prettyBytes, jsonErr := json.MarshalIndent(runResult.ToolArgs, "", "  "); jsonErr == nil {
+			slog.Debug("finalizer review result", "result", string(prettyBytes))
+		}
+		return result, nil
+	}
+
+	slog.Warn("finalizer: using text fallback")
+	return &models.FinalReview{Raw: runResult.FallbackText}, nil
 }
 
 func (p *Pipeline) parseResult(runResult *runner.RunResult) *models.ReviewResult {

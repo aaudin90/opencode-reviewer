@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 )
 
-func writeAgentFile(dir string, cfg Config) error {
+func writeAgentFile(dir, name string, cfg Config, prompt string) error {
 	agentDir := filepath.Join(dir, agentsDir)
 	if err := os.MkdirAll(agentDir, 0o750); err != nil {
 		return fmt.Errorf("create agents dir: %w", err)
@@ -22,8 +22,8 @@ permission:
 ---
 
 %s
-`, cfg.Model, cfg.AgentPrompt)
+`, cfg.Model, prompt)
 
-	path := filepath.Join(agentDir, agentName+".md")
+	path := filepath.Join(agentDir, name+".md")
 	return os.WriteFile(path, []byte(content), 0o600)
 }

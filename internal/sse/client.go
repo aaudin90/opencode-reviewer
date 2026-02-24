@@ -74,7 +74,7 @@ func parseStream(
 				raw := []byte(strings.Join(dataLines, ""))
 				var event toolCallEvent
 				if err := json.Unmarshal(raw, &event); err == nil {
-					trySendToolCall(&event, events)
+					trySendToolCall(&event, sessionID, events)
 					if args, ok := extractToolArgs(&event, sessionID, toolName); ok {
 						return args, nil
 					}
@@ -92,12 +92,13 @@ func parseStream(
 }
 
 // trySendToolCall sends a completed tool call event to the channel (non-blocking).
-func trySendToolCall(event *toolCallEvent, events chan<- ToolCall) {
+// Only events matching the given sessionID are forwarded.
+func trySendToolCall(event *toolCallEvent, sessionID string, events chan<- ToolCall) {
 	if events == nil {
 		return
 	}
 	part := event.Properties.Part
-	if part.Type == "tool" && part.State.Status == "completed" {
+	if part.Type == "tool" && part.State.Status == "completed" && part.SessionID == sessionID {
 		select {
 		case events <- ToolCall{Tool: part.Tool, SessionID: part.SessionID, Input: part.State.Input}:
 		default:

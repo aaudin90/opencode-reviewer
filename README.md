@@ -6,9 +6,8 @@ Automated code review pipeline powered by [OpenCode](https://opencode.ai). Runs 
 
 1. Fetches the target branch from the remote and builds a diff against the base branch.
 2. Writes the diff into a temporary workspace (`.opencode-review/diff.md`).
-3. Starts one or more OpenCode sessions in parallel — one per prompt file.
-4. Each session reads the diff, explores the codebase, and calls the `submit_review` tool with structured findings.
-5. All session results are merged into a single Markdown report.
+3. **Phase 1** — Starts one or more OpenCode sessions in parallel (one per prompt file). Each session reads the diff, explores the codebase, and calls the `submit_review` tool with structured findings.
+4. **Phase 2** — Starts a single finalizer session that receives all Phase 1 results as JSON, deduplicates and merges findings, and calls the `submit_final_review` tool to produce the consolidated review.
 
 ## Prerequisites
 
@@ -79,7 +78,8 @@ project_dir = "/path/to/your/project"
   base_branch = "main"
 
 [pipeline]
-  agent_config_path = "agent-prompt.md"
+  agent_config_path  = "agent-prompt.md"
+  finalizer_config_path = "finalizer.md"
   prompt_paths = [
     "../prompt-examples/review-bugs.md",
     "../prompt-examples/review-security.md",
@@ -126,8 +126,9 @@ Arbitrary key-value pairs set as environment variables. Values override TOML con
 
 | Key | Default | Description |
 |---|---|---|
-| `agent_config_path` | — | Path to the agent system prompt file. Relative to the TOML file, or absolute. If not set, the built-in default prompt is used. |
-| `prompt_paths` | — | List of user prompt files. Each file starts a separate parallel review session. Relative to the TOML file, or absolute. If not set, the built-in default prompt is used for a single session. |
+| `agent_config_path` | — | Path to the agent system prompt file (Phase 1 reviewer). Relative to the TOML file, or absolute. If not set, the built-in default prompt is used. |
+| `prompt_paths` | — | List of user prompt files. Each file starts a separate parallel review session (Phase 1). Relative to the TOML file, or absolute. If not set, the built-in default prompt is used for a single session. |
+| `finalizer_config_path` | — | Path to the finalizer agent prompt file (Phase 2 consolidation). Relative to the TOML file, or absolute. If not set, the built-in default finalizer prompt is used. |
 
 ### Environment Variables
 
@@ -151,6 +152,8 @@ All environment variables override their TOML counterparts when set.
 | `REVIEW_AGENT_CONFIG_PATH` | `pipeline.agent_config_path` | Path to agent prompt file (takes priority over inline). |
 | `REVIEW_AGENT_CONFIG` | `pipeline.agent_config_path` | Inline agent prompt text, or JSON with a `"prompt"` field. |
 | `REVIEW_PROMPT_PATHS` | `pipeline.prompt_paths` | Comma-separated paths to prompt files. Relative to CWD. |
+| `REVIEW_FINALIZER_CONFIG_PATH` | `pipeline.finalizer_config_path` | Path to finalizer prompt file (Phase 2, takes priority over inline). |
+| `REVIEW_FINALIZER_CONFIG` | `pipeline.finalizer_config_path` | Inline finalizer prompt text. |
 
 ### Priority Order
 
@@ -188,6 +191,15 @@ REVIEW_PROMPT_PATHS (comma-separated, relative to CWD)
   > built-in default (single session, general review)
 ```
 
+#### Finalizer prompt (Phase 2 consolidation)
+
+```
+REVIEW_FINALIZER_CONFIG_PATH (reads file)
+  > REVIEW_FINALIZER_CONFIG (inline text)
+  > pipeline.finalizer_config_path TOML (reads file)
+  > built-in default finalizer prompt
+```
+
 #### All other parameters
 
 ```
@@ -200,16 +212,16 @@ The `[env]` section has **middle priority**: overrides TOML config fields, but i
 
 ## Prompt System
 
-### Agent Prompt (system prompt)
+### Agent Prompt (Phase 1 system prompt)
 
-The agent prompt defines the agent's behaviour, review process, and output format. It instructs the agent to call the `submit_review` tool with structured findings. All sessions share the same agent prompt.
+The agent prompt defines the reviewer agent's behaviour, review process, and output format. It instructs the agent to call the `submit_review` tool with structured findings. All Phase 1 sessions share the same agent prompt.
 
 - Configure via `pipeline.agent_config_path` in TOML, `REVIEW_AGENT_CONFIG_PATH` env (file path), or `REVIEW_AGENT_CONFIG` env (inline text).
 - If not configured, the built-in default prompt (`internal/agentconfig/default-prompt.md`) is used.
 
-### Prompt Files (user prompts, parallel sessions)
+### Prompt Files (Phase 1 user prompts, parallel sessions)
 
-Each prompt file starts a separate review session running in parallel. This enables focused, parallel reviews from different angles.
+Each prompt file starts a separate Phase 1 review session running in parallel. This enables focused, parallel reviews from different angles.
 
 The repository includes ready-made examples in `prompt-examples/`:
 
@@ -221,6 +233,14 @@ The repository includes ready-made examples in `prompt-examples/`:
 | `review-style.md` | Naming conventions, godoc, magic numbers, dead code |
 
 Configure via `pipeline.prompt_paths` in TOML or `REVIEW_PROMPT_PATHS` env (comma-separated).
+
+### Finalizer Prompt (Phase 2 system prompt)
+
+The finalizer prompt defines the finalizer agent's consolidation behaviour. It instructs the agent to deduplicate and merge Phase 1 findings and call the `submit_final_review` tool once.
+
+- Configure via `pipeline.finalizer_config_path` in TOML, `REVIEW_FINALIZER_CONFIG_PATH` env (file path), or `REVIEW_FINALIZER_CONFIG` env (inline text).
+- If not configured, the built-in default prompt (`internal/finalizerconfig/default-prompt.md`) is used.
+- An example finalizer prompt is available at `prompt-examples/finalizer.md`.
 
 ## Development
 
@@ -250,7 +270,8 @@ internal/git/                Git operations (fetch, diff, log)
 internal/diff/               Diff parsing, filtering, context file generation
 internal/runner/             OpenCode serve/run lifecycle management
 internal/pipeline/           Review pipeline orchestration
-internal/agentconfig/        Agent system prompt loading
+internal/agentconfig/        Agent system prompt loading (Phase 1)
+internal/finalizerconfig/    Finalizer agent prompt loading (Phase 2)
 internal/providerconfig/     Provider JSON loading and validation
 internal/promptconfig/       Prompt file path resolution
 internal/envconfig/          Shared ENV-or-file resolution logic
