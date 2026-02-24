@@ -181,14 +181,14 @@ func TestNew_FinalizerWorkspace(t *testing.T) {
 		t.Error("submit_final_review.ts missing expected content")
 	}
 
-	// reviewer.md should exist
-	finalizerAgentPath := filepath.Join(ws.Dir(), "opencode", "agents", "reviewer.md")
+	// finalizer.md should exist
+	finalizerAgentPath := filepath.Join(ws.Dir(), "opencode", "agents", "finalizer.md")
 	finalizerData, err := os.ReadFile(finalizerAgentPath)
 	if err != nil {
-		t.Fatalf("read reviewer.md: %v", err)
+		t.Fatalf("read finalizer.md: %v", err)
 	}
 	if !strings.Contains(string(finalizerData), "You are the final review editor.") {
-		t.Error("reviewer.md missing prompt content")
+		t.Error("finalizer.md missing prompt content")
 	}
 
 	// submit_review.ts should NOT exist
@@ -197,7 +197,7 @@ func TestNew_FinalizerWorkspace(t *testing.T) {
 		t.Error("submit_review.ts should not exist in finalizer workspace")
 	}
 
-	// opencode.json should have default_agent = "reviewer"
+	// opencode.json should have default_agent = "finalizer"
 	configPath := filepath.Join(ws.Dir(), "opencode", "opencode.json")
 	data, err := os.ReadFile(configPath)
 	if err != nil {
@@ -207,8 +207,8 @@ func TestNew_FinalizerWorkspace(t *testing.T) {
 	if err := json.Unmarshal(data, &parsed); err != nil {
 		t.Fatalf("parse config: %v", err)
 	}
-	if parsed["default_agent"] != "reviewer" {
-		t.Errorf("default_agent = %v, want reviewer", parsed["default_agent"])
+	if parsed["default_agent"] != "finalizer" {
+		t.Errorf("default_agent = %v, want finalizer", parsed["default_agent"])
 	}
 }
 

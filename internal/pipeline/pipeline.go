@@ -173,7 +173,7 @@ func (p *Pipeline) runFinalizerReview(ctx context.Context, phase1Results []*mode
 		Prompt:     userMessage,
 		ToolName:   "submit_final_review",
 		PromptPath: "finalizer",
-		AgentName:  "reviewer", // TODO 79400
+		AgentName:  "finalizer", // TODO 79400
 	}) {
 		switch {
 		case event.Err != nil:

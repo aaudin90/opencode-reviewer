@@ -11,7 +11,7 @@ import (
 const (
 	defaultMaxSteps    = 30
 	reviewerAgentName  = "reviewer"
-	finalizerAgentName = "reviewer" // TODO 79400
+	finalizerAgentName = "finalizer" // TODO 79400
 	opencodeSubdir     = "opencode"
 	agentsDir          = "opencode/agents"
 	toolsDir           = "opencode/tools"
@@ -28,7 +28,7 @@ func NewReviewer(cfg Config, agentPrompt string) (*Workspace, error) {
 	return newWorkspace(cfg, reviewerAgentName, "submit_review.ts", submitReviewTS, agentPrompt)
 }
 
-// NewFinalizer creates a finalizer workspace: agents/reviewer.md + tools/submit_final_review.ts.
+// NewFinalizer creates a finalizer workspace: agents/finalizer.md + tools/submit_final_review.ts.
 func NewFinalizer(cfg Config, finalizerPrompt string) (*Workspace, error) {
 	return newWorkspace(cfg, finalizerAgentName, "submit_final_review.ts", submitFinalReviewTS, finalizerPrompt)
 }
