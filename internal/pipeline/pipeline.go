@@ -73,7 +73,6 @@ func (p *Pipeline) Run(ctx context.Context) (*models.FinalReview, error) {
 	if err := p.runner.StartServe(ctx); err != nil {
 		return nil, fmt.Errorf("start reviewer serve: %w", err)
 	}
-	//phase1Results := make([]*models.ReviewResult, 0) //p.runAllReviews(ctx)
 	phase1Results := p.runAllReviews(ctx)
 	p.runner.StopServe()
 
