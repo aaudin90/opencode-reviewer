@@ -32,7 +32,6 @@ const (
 	healthTimeout       = 30 * time.Second
 	stopGracePeriod     = 10 * time.Second
 	abortTimeout        = 5 * time.Second
-	agentName           = "reviewer"
 	maxToolCallRetries  = 3
 	toolCallWaitTimeout = 3 * time.Second
 )
@@ -186,7 +185,7 @@ func (r *Runner) run(ctx context.Context, req RunRequest, out chan<- RunEvent) {
 			}
 		}()
 
-		resp, err := r.sendMessage(ctx, sessionID, RunRequest{Prompt: prompt})
+		resp, err := r.sendMessage(ctx, sessionID, RunRequest{Prompt: prompt, AgentName: req.AgentName})
 		if err != nil {
 			attemptCancel()
 			if ctx.Err() != nil {
@@ -346,13 +345,9 @@ func (r *Runner) createSession(ctx context.Context) (string, error) {
 }
 
 func (r *Runner) sendMessage(ctx context.Context, sessionID string, runReq RunRequest) (*messageResponse, error) {
-	agent := runReq.AgentName
-	if agent == "" {
-		agent = agentName
-	}
 	body := messageRequest{
 		Parts: []messagePart{{Type: "text", Text: runReq.Prompt}},
-		Agent: agent,
+		Agent: runReq.AgentName,
 		Model: parseModel(r.cfg.Model),
 	}
 

@@ -189,8 +189,9 @@ func TestRun(t *testing.T) {
 	})
 
 	result, err := collectRunResult(t, r.Run(context.Background(), RunRequest{
-		Prompt:   "review this",
-		ToolName: "submit_review",
+		Prompt:    "review this",
+		ToolName:  "submit_review",
+		AgentName: "reviewer",
 	}))
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -281,7 +282,7 @@ func TestRunRetry(t *testing.T) {
 	})
 
 	const testTool = "submit_review"
-	result, err := collectRunResult(t, r.Run(context.Background(), RunRequest{Prompt: "review this", ToolName: testTool}))
+	result, err := collectRunResult(t, r.Run(context.Background(), RunRequest{Prompt: "review this", ToolName: testTool, AgentName: "reviewer"}))
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -355,7 +356,7 @@ func TestRunFallback(t *testing.T) {
 		StageTimeout: 30,
 	})
 
-	result, err := collectRunResult(t, r.Run(context.Background(), RunRequest{Prompt: "review this", ToolName: "submit_review"}))
+	result, err := collectRunResult(t, r.Run(context.Background(), RunRequest{Prompt: "review this", ToolName: "submit_review", AgentName: "reviewer"}))
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -410,8 +411,9 @@ func TestRunTimeout(t *testing.T) {
 	})
 
 	_, err := collectRunResult(t, r.Run(context.Background(), RunRequest{
-		Prompt:   "slow review",
-		ToolName: "submit_review",
+		Prompt:    "slow review",
+		ToolName:  "submit_review",
+		AgentName: "reviewer",
 	}))
 	if err == nil {
 		t.Fatal("Run should return error on timeout")
