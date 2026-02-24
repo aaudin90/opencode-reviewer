@@ -7,5 +7,4 @@ type Config struct {
 	ProviderJSON json.RawMessage
 	Model        string
 	MaxSteps     int
-	AgentPrompt  string
 }
