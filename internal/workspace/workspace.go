@@ -11,7 +11,7 @@ import (
 const (
 	defaultMaxSteps    = 30
 	reviewerAgentName  = "reviewer"
-	finalizerAgentName = "finalizer" // TODO 79400
+	finalizerAgentName = "finalizer"
 	opencodeSubdir     = "opencode"
 	agentsDir          = "opencode/agents"
 	toolsDir           = "opencode/tools"

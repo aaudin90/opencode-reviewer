@@ -27,7 +27,6 @@ type sseResult struct {
 }
 
 const (
-	defaultPort        = 4096
 	healthPollInterval = 500 * time.Millisecond
 	healthTimeout      = 30 * time.Second
 	stopGracePeriod    = 10 * time.Second
