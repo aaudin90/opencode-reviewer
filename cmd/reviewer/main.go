@@ -17,12 +17,16 @@ import (
 	"github.com/aaudin90/opencode-reviewer/internal/promptconfig"
 	"github.com/aaudin90/opencode-reviewer/internal/providerconfig"
 	"github.com/aaudin90/opencode-reviewer/internal/runner"
+	"github.com/aaudin90/opencode-reviewer/internal/vcs"
+	gitlabvcs "github.com/aaudin90/opencode-reviewer/internal/vcs/gitlab"
 	"github.com/aaudin90/opencode-reviewer/internal/workspace"
 )
 
 type CLI struct {
-	Config string `kong:"optional,type='path',placeholder='FILE',help='Path to TOML config file. If omitted, all settings must be provided via environment variables.'"`
-	Branch string `kong:"placeholder='BRANCH',help='Branch to review (overrides REVIEW_BRANCH env).'"`
+	Config     string `kong:"optional,type='path',placeholder='FILE',help='Path to TOML config file. If omitted, all settings must be provided via environment variables.'"`
+	Branch     string `kong:"placeholder='BRANCH',help='Branch to review (overrides REVIEW_BRANCH env).'"`
+	ReviewDump string `kong:"optional,name='review-dump',type='path',placeholder='FILE',help='Save final review JSON to FILE (for fast-path debugging).'"`
+	FastReview string `kong:"optional,name='fast-review',type='path',placeholder='FILE',help='Skip LLM pipeline and load review from FILE (fast-path for debugging VCS).'"`
 }
 
 func main() {
@@ -45,7 +49,7 @@ Config file (TOML) sections:
 
   [opencode]
     endpoint                API endpoint URL (optional, connects to running instance)
-    port                    API port (default: 4096)
+    port                    Port for opencode subprocess (dynamic OS port if not set)
     model                   LLM model identifier (e.g. llm-proxy/kimi-k2.5)
     binary                  Path to opencode binary (default: opencode)
     stage_timeout           Timeout per stage in seconds (default: 600)
@@ -67,6 +71,12 @@ Config file (TOML) sections:
     finalizer_message_path    Path to finalizer user message file (relative to config file or absolute)
     finalizer_message         Inline finalizer user message (alternative to path)
 
+  [gitlab]
+    url                       GitLab instance URL (e.g. https://gitlab.example.com)
+    token                     GitLab private access token
+    project_id                Numeric GitLab project ID
+    clear_comments            Delete open unanswered discussions before posting (default: false)
+
 Environment variables (override TOML values):
   REVIEW_PROJECT_DIR               Path to the project repository (overrides project_dir)
   REVIEW_BRANCH                    Branch to review (overridden by --branch flag)
@@ -85,6 +95,14 @@ Environment variables (override TOML values):
   REVIEW_MESSAGE_PATHS             Comma-separated paths to reviewer message files (overrides pipeline.review_message_paths)
   REVIEW_FINALIZER_PROMPT_PATH     Path to finalizer agent prompt file (overrides pipeline.finalizer_prompt_path)
   REVIEW_FINALIZER_MESSAGE_PATH    Path to finalizer user message file (overrides pipeline.finalizer_message_path)
+  REVIEW_GITLAB_URL                GitLab instance URL (overrides gitlab.url)
+  REVIEW_GITLAB_TOKEN              GitLab private access token (overrides gitlab.token)
+  REVIEW_GITLAB_PROJECT_ID         Numeric GitLab project ID (overrides gitlab.project_id)
+  REVIEW_GITLAB_CLEAR_COMMENTS     Clear open MR discussions before posting (true/1 to enable)
+
+Debug flags:
+  --review-dump FILE    Save final review JSON to FILE after LLM pipeline (for replay with --fast-review).
+  --fast-review FILE    Skip LLM pipeline and load review from FILE (fast-path for iterating on VCS publishing).
 
 Priority (branch):            --branch flag > REVIEW_BRANCH env > git.branch TOML.
 Priority (provider):          REVIEW_PROVIDER_CONFIG_PATH > REVIEW_PROVIDER_CONFIG > TOML path.
@@ -188,13 +206,28 @@ Priority (finalizer message): REVIEW_FINALIZER_MESSAGE_PATH > finalizer_message 
 		os.Exit(1)
 	}
 
-	if err := run(cfg, reviewerWS, finalizerWS, messages, finalizerMessage); err != nil {
+	if err := run(cfg, reviewerWS, finalizerWS, messages, finalizerMessage, cli.ReviewDump, cli.FastReview); err != nil {
 		slog.Error("review failed", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run(cfg *config.Config, reviewerWS, finalizerWS *workspace.Workspace, messages []string, finalizerMessage string) error {
+// buildPublisher constructs a GitLab publisher when all required
+// gitlab config fields are set. Returns nil otherwise (publishing skipped).
+func buildPublisher(cfg *config.Config) vcs.Publisher {
+	gl := cfg.GitLab
+	if gl.URL == "" || gl.Token == "" || gl.ProjectID == 0 {
+		return nil
+	}
+	client := gitlabvcs.NewClient(gitlabvcs.Config{
+		URL:       gl.URL,
+		Token:     gl.Token,
+		ProjectID: gl.ProjectID,
+	})
+	return gitlabvcs.NewPublisher(client, gl.ClearComments)
+}
+
+func run(cfg *config.Config, reviewerWS, finalizerWS *workspace.Workspace, messages []string, finalizerMessage string, reviewDump, fastReview string) error {
 	projectDir, err := filepath.Abs(cfg.ProjectDir)
 	if err != nil {
 		return fmt.Errorf("resolve project dir: %w", err)
@@ -210,6 +243,8 @@ func run(cfg *config.Config, reviewerWS, finalizerWS *workspace.Workspace, messa
 	reviewerRunner := runner.New(cfg.OpenCode, projectDir, reviewerWS)
 	finalizerRunner := runner.New(cfg.OpenCode, projectDir, finalizerWS)
 
+	publisher := buildPublisher(cfg)
+
 	p := pipeline.New(pipeline.Config{
 		GitClient:        gitClient,
 		Branch:           cfg.Git.Branch,
@@ -218,6 +253,9 @@ func run(cfg *config.Config, reviewerWS, finalizerWS *workspace.Workspace, messa
 		FinalizerRunner:  finalizerRunner,
 		Messages:         messages,
 		FinalizerMessage: finalizerMessage,
+		Publisher:        publisher,
+		ReviewDumpPath:   reviewDump,
+		FastReviewPath:   fastReview,
 	})
 
 	ctx := context.Background()
