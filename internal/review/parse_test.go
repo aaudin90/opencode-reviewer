@@ -217,12 +217,12 @@ func TestParseToolArgs_EmptyVerdict(t *testing.T) {
 	}
 }
 
-func TestParseToolArgs_RawPreserved(t *testing.T) {
+func TestParseToolArgs_RawEmpty(t *testing.T) {
 	input := json.RawMessage(`{"summary": "test", "verdict": "approve", "findings": []}`)
 
 	result := ParseToolArgs(input)
 
-	if result.Raw != string(input) {
-		t.Errorf("Raw = %q, want %q", result.Raw, string(input))
+	if result.Raw != "" {
+		t.Errorf("Raw = %q, want empty (Raw is only set for text fallback)", result.Raw)
 	}
 }

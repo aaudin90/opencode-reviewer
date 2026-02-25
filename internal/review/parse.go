@@ -25,7 +25,7 @@ var validVerdicts = map[string]bool{
 // into a ReviewResult. Returns a result with ParseErr set if parsing fails or
 // the verdict is invalid. Fields are always populated so the caller can inspect them.
 func ParseToolArgs(data json.RawMessage) *models.ReviewResult {
-	result := &models.ReviewResult{Raw: string(data)}
+	result := &models.ReviewResult{}
 	var args submitReviewArgs
 	if err := json.Unmarshal(data, &args); err != nil {
 		result.ParseErr = fmt.Errorf("parse tool args: %w", err)
