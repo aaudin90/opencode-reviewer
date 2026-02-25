@@ -7,19 +7,24 @@ import (
 	"strings"
 )
 
-// Load resolves prompt file paths from REVIEW_PROMPT_PATHS env (comma-separated)
-// or from the tomlPaths list (resolved relative to configDir).
-// Returns an error from the caller (pipeline) if neither is set.
-func Load(configDir string, tomlPaths []string) ([]string, error) {
-	if raw := os.Getenv("REVIEW_PROMPT_PATHS"); raw != "" {
+// Load resolves reviewer messages by priority:
+//  1. REVIEW_MESSAGE_PATHS env (comma-separated file paths, relative to cwd) → read files → return contents
+//  2. tomlInline (if non-empty) → return as-is
+//  3. tomlPaths (relative to configDir) → read files → return contents
+//  4. nil (caller decides what to do)
+func Load(configDir string, tomlPaths []string, tomlInline []string) ([]string, error) {
+	if raw := os.Getenv("REVIEW_MESSAGE_PATHS"); raw != "" {
 		cwd, err := os.Getwd()
 		if err != nil {
 			return nil, fmt.Errorf("get working directory: %w", err)
 		}
-		return resolveAndValidate(splitPaths(raw), cwd)
+		return readAll(splitPaths(raw), cwd)
+	}
+	if len(tomlInline) > 0 {
+		return tomlInline, nil
 	}
 	if len(tomlPaths) > 0 {
-		return resolveAndValidate(tomlPaths, configDir)
+		return readAll(tomlPaths, configDir)
 	}
 	return nil, nil
 }
@@ -35,17 +40,18 @@ func splitPaths(s string) []string {
 	return result
 }
 
-func resolveAndValidate(paths []string, baseDir string) ([]string, error) {
+func readAll(paths []string, baseDir string) ([]string, error) {
 	result := make([]string, 0, len(paths))
 	for _, p := range paths {
 		abs := p
 		if !filepath.IsAbs(p) {
 			abs = filepath.Join(baseDir, p)
 		}
-		if _, err := os.Stat(abs); err != nil { // #nosec G703 -- path from trusted config or env, no traversal risk
-			return nil, fmt.Errorf("prompt file %q: %w", abs, err)
+		data, err := os.ReadFile(filepath.Clean(abs)) // #nosec G304 G703 -- path from trusted config or env
+		if err != nil {
+			return nil, fmt.Errorf("read message file %q: %w", abs, err)
 		}
-		result = append(result, abs)
+		result = append(result, string(data))
 	}
 	return result, nil
 }

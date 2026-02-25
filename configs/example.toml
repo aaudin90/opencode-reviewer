@@ -18,14 +18,17 @@
 #   REVIEW_OPENCODE_MIN_VERSION      Minimum opencode version
 #   REVIEW_PROVIDER_CONFIG_PATH      Path to provider JSON file
 #   REVIEW_PROVIDER_CONFIG           Inline provider JSON config
-#   REVIEW_AGENT_CONFIG_PATH         Path to agent prompt file
-#   REVIEW_AGENT_CONFIG              Inline agent prompt or JSON with "prompt" field
-#   REVIEW_PROMPT_PATHS              Comma-separated paths to prompt files
+#   REVIEW_AGENT_PROMPT_PATH         Path to reviewer agent prompt file
+#   REVIEW_MESSAGE_PATHS             Comma-separated paths to reviewer message files
+#   REVIEW_FINALIZER_PROMPT_PATH     Path to finalizer agent prompt file
+#   REVIEW_FINALIZER_MESSAGE_PATH    Path to finalizer user message file
 #
-# Priority (branch):   --branch flag > REVIEW_BRANCH env > git.branch TOML.
-# Priority (provider): REVIEW_PROVIDER_CONFIG_PATH > REVIEW_PROVIDER_CONFIG > TOML path.
-# Priority (agent):    REVIEW_AGENT_CONFIG_PATH > REVIEW_AGENT_CONFIG > TOML path > built-in default.
-# Priority (prompts):  REVIEW_PROMPT_PATHS > pipeline.prompt_paths TOML > built-in default.
+# Priority (branch):            --branch flag > REVIEW_BRANCH env > git.branch TOML.
+# Priority (provider):          REVIEW_PROVIDER_CONFIG_PATH > REVIEW_PROVIDER_CONFIG > TOML path.
+# Priority (agent prompt):      REVIEW_AGENT_PROMPT_PATH > review_agent_prompt TOML > review_agent_prompt_path TOML > built-in default.
+# Priority (messages):          REVIEW_MESSAGE_PATHS > review_messages TOML > review_message_paths TOML > (none).
+# Priority (finalizer prompt):  REVIEW_FINALIZER_PROMPT_PATH > finalizer_prompt TOML > finalizer_prompt_path TOML > built-in default.
+# Priority (finalizer message): REVIEW_FINALIZER_MESSAGE_PATH > finalizer_message TOML > finalizer_message_path TOML > built-in default.
 
 # project_dir: absolute path to the project repository to review.
 # Used as working directory for git, opencode serve, and output.
@@ -78,18 +81,41 @@ project_dir = "/path/to/your/project"
   base_branch = "main"
 
 [pipeline]
-  # agent_config_path: path to agent prompt file (relative to this file or absolute).
-  # Can also be set via REVIEW_AGENT_CONFIG_PATH env var.
-  agent_config_path = "agent-prompt.md"
+  # review_agent_prompt_path: path to the reviewer agent prompt file (relative to this file or absolute).
+  # Env: REVIEW_AGENT_PROMPT_PATH
+  review_agent_prompt_path = "agent-prompt.md"
 
-  # prompt_paths: list of prompt files (relative to this file or absolute).
+  # review_agent_prompt: inline reviewer agent prompt (alternative to path).
+  # If set, review_agent_prompt_path is ignored (but env path still takes priority).
+  # review_agent_prompt = "You are a code reviewer..."
+
+  # review_message_paths: list of reviewer message files (relative to this file or absolute).
   # Each file triggers a separate parallel review session.
-  # Can also be set via REVIEW_PROMPT_PATHS env var (comma-separated paths).
-  # If not set, the built-in default review prompt is used.
-  prompt_paths = [
+  # Env: REVIEW_MESSAGE_PATHS (comma-separated paths).
+  review_message_paths = [
     "../prompt-examples/review-bugs.md",
     "../prompt-examples/review-security.md",
     "../prompt-examples/review-architecture.md",
     "../prompt-examples/review-style.md",
   ]
 
+  # review_messages: inline reviewer messages (alternative to review_message_paths).
+  # If set, review_message_paths is ignored (but env paths still take priority).
+  # review_messages = ["Review for bugs...", "Review for security..."]
+
+  # finalizer_prompt_path: path to the finalizer agent prompt file (relative to this file or absolute).
+  # Env: REVIEW_FINALIZER_PROMPT_PATH
+  # finalizer_prompt_path = "finalizer.md"
+
+  # finalizer_prompt: inline finalizer agent prompt (alternative to path).
+  # If set, finalizer_prompt_path is ignored (but env path still takes priority).
+  # finalizer_prompt = "You are a finalizer..."
+
+  # finalizer_message_path: path to the finalizer user message file (relative to this file or absolute).
+  # Env: REVIEW_FINALIZER_MESSAGE_PATH
+  # If not set, the built-in default message is used.
+  # finalizer_message_path = "finalizer-message.md"
+
+  # finalizer_message: inline finalizer user message (alternative to path).
+  # If set, finalizer_message_path is ignored (but env path still takes priority).
+  # finalizer_message = "Merge and deduplicate the following findings..."

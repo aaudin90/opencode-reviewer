@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"os"
 
 	"github.com/aaudin90/opencode-reviewer/internal/agentsmd"
 	"github.com/aaudin90/opencode-reviewer/internal/diff"
@@ -17,34 +16,34 @@ import (
 
 // Config holds all parameters needed to construct a Pipeline.
 type Config struct {
-	GitClient       *git.Client
-	Branch          string
-	BaseBranch      string
-	Runner          *runner.Runner
-	FinalizerRunner *runner.Runner
-	PromptPaths     []string
-	FinalizerPrompt string
+	GitClient        *git.Client
+	Branch           string
+	BaseBranch       string
+	Runner           *runner.Runner
+	FinalizerRunner  *runner.Runner
+	Messages         []string // reviewer message contents
+	FinalizerMessage string   // finalizer user message
 }
 
 type Pipeline struct {
-	gitClient       *git.Client
-	branch          string
-	baseBranch      string
-	runner          *runner.Runner
-	finalizerRunner *runner.Runner
-	promptPaths     []string // resolved absolute paths; must be non-empty
-	finalizerPrompt string
+	gitClient        *git.Client
+	branch           string
+	baseBranch       string
+	runner           *runner.Runner
+	finalizerRunner  *runner.Runner
+	messages         []string // reviewer message contents; must be non-empty
+	finalizerMessage string
 }
 
 func New(cfg Config) *Pipeline {
 	return &Pipeline{
-		gitClient:       cfg.GitClient,
-		branch:          cfg.Branch,
-		baseBranch:      cfg.BaseBranch,
-		runner:          cfg.Runner,
-		finalizerRunner: cfg.FinalizerRunner,
-		promptPaths:     cfg.PromptPaths,
-		finalizerPrompt: cfg.FinalizerPrompt,
+		gitClient:        cfg.GitClient,
+		branch:           cfg.Branch,
+		baseBranch:       cfg.BaseBranch,
+		runner:           cfg.Runner,
+		finalizerRunner:  cfg.FinalizerRunner,
+		messages:         cfg.Messages,
+		finalizerMessage: cfg.FinalizerMessage,
 	}
 }
 
@@ -102,29 +101,29 @@ func (p *Pipeline) swapAgentsMD() error {
 // runAllReviews runs all Phase 1 reviewer sessions in parallel.
 // Failed sessions are logged but do not stop the pipeline.
 func (p *Pipeline) runAllReviews(ctx context.Context) []*models.ReviewResult {
-	if len(p.promptPaths) == 0 {
-		slog.Error("no prompt paths configured: set pipeline.prompt_paths in config or REVIEW_PROMPT_PATHS env")
+	if len(p.messages) == 0 {
+		slog.Error("no messages configured: set pipeline.review_message_paths in config or REVIEW_MESSAGE_PATHS env")
 		return nil
 	}
 
-	resultsCh := make(chan promptRunResult, len(p.promptPaths))
+	resultsCh := make(chan promptRunResult, len(p.messages))
 
-	for _, path := range p.promptPaths {
-		go func(promptPath string) {
-			result, runErr := p.runSingleReview(ctx, promptPath)
-			resultsCh <- promptRunResult{path: promptPath, result: result, err: runErr}
-		}(path)
+	for idx, msg := range p.messages {
+		go func(message string, i int) {
+			result, runErr := p.runSingleReview(ctx, message, i)
+			resultsCh <- promptRunResult{index: i, result: result, err: runErr}
+		}(msg, idx)
 	}
 
-	results := make([]*models.ReviewResult, 0, len(p.promptPaths))
-	for range p.promptPaths {
+	results := make([]*models.ReviewResult, 0, len(p.messages))
+	for range p.messages {
 		r := <-resultsCh
 		if r.err != nil {
-			slog.Error("review session failed", "prompt", r.path, "error", r.err)
+			slog.Error("review session failed", "prompt_index", r.index, "error", r.err)
 			continue
 		}
 		slog.Info("review result",
-			"prompt", r.path,
+			"prompt_index", r.index,
 			"reviewer", r.result.ReviewerName,
 			"verdict", r.result.Verdict,
 			"findings", len(r.result.Findings),
@@ -135,16 +134,12 @@ func (p *Pipeline) runAllReviews(ctx context.Context) []*models.ReviewResult {
 	return results
 }
 
-func (p *Pipeline) runSingleReview(ctx context.Context, promptPath string) (*models.ReviewResult, error) {
-	prompt, err := readPromptFile(promptPath)
-	if err != nil {
-		return nil, err
-	}
+func (p *Pipeline) runSingleReview(ctx context.Context, message string, idx int) (*models.ReviewResult, error) {
 	var runResult *runner.RunResult
 	for event := range p.runner.Run(ctx, runner.RunRequest{
-		Prompt:     prompt,
+		Prompt:     message,
 		ToolName:   "submit_review",
-		PromptPath: promptPath,
+		PromptPath: fmt.Sprintf("message-%d", idx),
 		AgentName:  "reviewer",
 	}) {
 		switch {
@@ -166,14 +161,14 @@ func (p *Pipeline) runFinalizerReview(ctx context.Context, phase1Results []*mode
 	if err != nil {
 		return nil, fmt.Errorf("marshal phase1 results: %w", err)
 	}
-	userMessage := p.finalizerPrompt + "\n\n## Phase 1 Results\n\n```json\n" + string(serialized) + "\n```"
+	userMessage := p.finalizerMessage + "\n\n## Phase 1 Results\n\n```json\n" + string(serialized) + "\n```"
 
 	var runResult *runner.RunResult
 	for event := range p.finalizerRunner.Run(ctx, runner.RunRequest{
 		Prompt:     userMessage,
 		ToolName:   "submit_final_review",
 		PromptPath: "finalizer",
-		AgentName:  "finalizer", // TODO 79400
+		AgentName:  "finalizer",
 	}) {
 		switch {
 		case event.Err != nil:
@@ -276,12 +271,4 @@ func (p *Pipeline) prepareBranch() error {
 	}
 
 	return nil
-}
-
-func readPromptFile(path string) (string, error) {
-	data, err := os.ReadFile(path) // #nosec G304 -- path from trusted config
-	if err != nil {
-		return "", fmt.Errorf("read prompt file %q: %w", path, err)
-	}
-	return string(data), nil
 }

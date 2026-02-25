@@ -6,25 +6,23 @@ import (
 	"testing"
 )
 
-func TestLoad_RawText(t *testing.T) {
-	t.Setenv("REVIEW_AGENT_CONFIG", "You are a code reviewer.")
-	t.Setenv("REVIEW_AGENT_CONFIG_PATH", "")
+func TestLoad_InlinePrompt(t *testing.T) {
+	t.Setenv("REVIEW_AGENT_PROMPT_PATH", "")
 
-	prompt, err := Load("")
+	prompt, err := Load("", "You are a code reviewer.")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	if prompt != "You are a code reviewer." {
-		t.Errorf("prompt = %q, want raw text", prompt)
+		t.Errorf("prompt = %q, want inline text", prompt)
 	}
 }
 
-func TestLoad_JSONReturnedAsRaw(t *testing.T) {
+func TestLoad_InlineJSONReturnedAsRaw(t *testing.T) {
 	raw := `{"prompt": "Review code carefully."}`
-	t.Setenv("REVIEW_AGENT_CONFIG", raw)
-	t.Setenv("REVIEW_AGENT_CONFIG_PATH", "")
+	t.Setenv("REVIEW_AGENT_PROMPT_PATH", "")
 
-	prompt, err := Load("")
+	prompt, err := Load("", raw)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -33,30 +31,28 @@ func TestLoad_JSONReturnedAsRaw(t *testing.T) {
 	}
 }
 
-func TestLoad_FromFile(t *testing.T) {
+func TestLoad_FromEnvFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agent.txt")
 	if err := os.WriteFile(path, []byte("File prompt."), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	t.Setenv("REVIEW_AGENT_CONFIG_PATH", path)
-	t.Setenv("REVIEW_AGENT_CONFIG", "env prompt")
+	t.Setenv("REVIEW_AGENT_PROMPT_PATH", path)
 
-	prompt, err := Load("")
+	prompt, err := Load("", "inline prompt")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	if prompt != "File prompt." {
-		t.Errorf("prompt = %q, want file content (file takes priority)", prompt)
+		t.Errorf("prompt = %q, want file content (env file takes priority over inline)", prompt)
 	}
 }
 
 func TestLoad_NeitherSet(t *testing.T) {
-	t.Setenv("REVIEW_AGENT_CONFIG", "")
-	t.Setenv("REVIEW_AGENT_CONFIG_PATH", "")
+	t.Setenv("REVIEW_AGENT_PROMPT_PATH", "")
 
-	prompt, err := Load("")
+	prompt, err := Load("", "")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -66,10 +62,9 @@ func TestLoad_NeitherSet(t *testing.T) {
 }
 
 func TestLoad_WhitespaceOnlyFallsBackToDefault(t *testing.T) {
-	t.Setenv("REVIEW_AGENT_CONFIG", "   ")
-	t.Setenv("REVIEW_AGENT_CONFIG_PATH", "")
+	t.Setenv("REVIEW_AGENT_PROMPT_PATH", "")
 
-	prompt, err := Load("")
+	prompt, err := Load("", "   ")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -85,10 +80,9 @@ func TestLoad_FromConfigPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Setenv("REVIEW_AGENT_CONFIG", "")
-	t.Setenv("REVIEW_AGENT_CONFIG_PATH", "")
+	t.Setenv("REVIEW_AGENT_PROMPT_PATH", "")
 
-	prompt, err := Load(path)
+	prompt, err := Load(path, "")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -97,15 +91,37 @@ func TestLoad_FromConfigPath(t *testing.T) {
 	}
 }
 
-func TestLoad_EnvOverridesConfigPath(t *testing.T) {
-	t.Setenv("REVIEW_AGENT_CONFIG", "env prompt wins")
-	t.Setenv("REVIEW_AGENT_CONFIG_PATH", "")
+func TestLoad_InlineOverridesConfigPath(t *testing.T) {
+	t.Setenv("REVIEW_AGENT_PROMPT_PATH", "")
 
-	prompt, err := Load("/nonexistent/path.md")
+	prompt, err := Load("/nonexistent/path.md", "inline prompt wins")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if prompt != "env prompt wins" {
-		t.Errorf("prompt = %q, want env to take priority over configPath", prompt)
+	if prompt != "inline prompt wins" {
+		t.Errorf("prompt = %q, want inline to take priority over configPath", prompt)
+	}
+}
+
+func TestLoad_EnvFileOverridesAll(t *testing.T) {
+	dir := t.TempDir()
+	envPath := filepath.Join(dir, "env-agent.txt")
+	if err := os.WriteFile(envPath, []byte("env file wins"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tomlPath := filepath.Join(dir, "toml-agent.txt")
+	if err := os.WriteFile(tomlPath, []byte("toml path content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("REVIEW_AGENT_PROMPT_PATH", envPath)
+
+	prompt, err := Load(tomlPath, "inline content")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if prompt != "env file wins" {
+		t.Errorf("prompt = %q, want env file to take priority over inline and configPath", prompt)
 	}
 }
