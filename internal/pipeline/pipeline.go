@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 
 	"github.com/aaudin90/opencode-reviewer/internal/agentsmd"
 	"github.com/aaudin90/opencode-reviewer/internal/diff"
@@ -12,7 +13,15 @@ import (
 	"github.com/aaudin90/opencode-reviewer/internal/models"
 	"github.com/aaudin90/opencode-reviewer/internal/review"
 	"github.com/aaudin90/opencode-reviewer/internal/runner"
+	"github.com/aaudin90/opencode-reviewer/internal/vcs"
 )
+
+// finalReviewDump is used to persist and restore FinalReview across runs.
+type finalReviewDump struct {
+	Summary  string                `json:"summary"`
+	Verdict  string                `json:"verdict"`
+	Findings []models.FinalFinding `json:"findings"`
+}
 
 // Config holds all parameters needed to construct a Pipeline.
 type Config struct {
@@ -21,8 +30,11 @@ type Config struct {
 	BaseBranch       string
 	Runner           *runner.Runner
 	FinalizerRunner  *runner.Runner
-	Messages         []string // reviewer message contents
-	FinalizerMessage string   // finalizer user message
+	Messages         []string      // reviewer message contents
+	FinalizerMessage string        // finalizer user message
+	Publisher        vcs.Publisher // optional; nil = skip publishing
+	ReviewDumpPath   string        // if set, save writtenReview as JSON after LLM pipeline
+	FastReviewPath   string        // if set, skip LLM stages and load review from this file
 }
 
 type Pipeline struct {
@@ -33,6 +45,10 @@ type Pipeline struct {
 	finalizerRunner  *runner.Runner
 	messages         []string // reviewer message contents; must be non-empty
 	finalizerMessage string
+	publisher        vcs.Publisher
+	diffResult       *diff.Result // set by prepareDiff, used for normalization
+	reviewDumpPath   string
+	fastReviewPath   string
 }
 
 func New(cfg Config) *Pipeline {
@@ -44,6 +60,9 @@ func New(cfg Config) *Pipeline {
 		finalizerRunner:  cfg.FinalizerRunner,
 		messages:         cfg.Messages,
 		finalizerMessage: cfg.FinalizerMessage,
+		publisher:        cfg.Publisher,
+		reviewDumpPath:   cfg.ReviewDumpPath,
+		fastReviewPath:   cfg.FastReviewPath,
 	}
 }
 
@@ -63,6 +82,16 @@ func (p *Pipeline) Run(ctx context.Context) (*models.FinalReview, error) {
 		return nil, fmt.Errorf("prepare diff: %w", err)
 	}
 	slog.Info("diff context ready", "path", diffPath)
+
+	if p.fastReviewPath != "" {
+		writtenReview, err := p.loadReview(p.fastReviewPath)
+		if err != nil {
+			return nil, fmt.Errorf("load review dump: %w", err)
+		}
+		slog.Info("fast path: loaded review from file", "path", p.fastReviewPath)
+		p.publishReview(ctx, writtenReview)
+		return writtenReview, nil
+	}
 
 	if err := p.swapAgentsMD(); err != nil {
 		return nil, fmt.Errorf("swap agents.md: %w", err)
@@ -85,7 +114,35 @@ func (p *Pipeline) Run(ctx context.Context) (*models.FinalReview, error) {
 		return nil, fmt.Errorf("finalizer review: %w", err)
 	}
 
+	if p.reviewDumpPath != "" {
+		if dumpErr := p.saveReview(writtenReview, p.reviewDumpPath); dumpErr != nil {
+			slog.Warn("failed to save review dump", "path", p.reviewDumpPath, "error", dumpErr)
+		} else {
+			slog.Info("review dump saved", "path", p.reviewDumpPath)
+		}
+	}
+
+	p.publishReview(ctx, writtenReview)
+
 	return writtenReview, nil
+}
+
+func (p *Pipeline) publishReview(ctx context.Context, review *models.FinalReview) {
+	if p.publisher == nil || review == nil || p.diffResult == nil {
+		return
+	}
+	normalizer := vcs.NewNormalizer(p.diffResult)
+
+	// Correct StartLine/EndLine in findings for display in summary note.
+	normalizedReview := *review
+	normalizedReview.Findings = normalizer.Normalize(review.Findings)
+
+	// Map findings to inline positions and normalize old/new line numbers.
+	inline := normalizer.NormalizeDiff(vcs.MapFindings(review.Findings))
+
+	if err := p.publisher.Publish(ctx, &normalizedReview, inline, p.branch, p.baseBranch); err != nil {
+		slog.Warn("failed to publish review to VCS", "error", err)
+	}
 }
 
 func (p *Pipeline) swapAgentsMD() error {
@@ -237,6 +294,7 @@ func (p *Pipeline) prepareDiff() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("prepare: %w", err)
 	}
+	p.diffResult = result
 
 	slog.Info("diff parsed",
 		"files", len(result.Files),
@@ -252,6 +310,35 @@ func (p *Pipeline) prepareDiff() (string, error) {
 	}
 
 	return path, nil
+}
+
+func (p *Pipeline) saveReview(review *models.FinalReview, path string) error {
+	dump := finalReviewDump{
+		Summary:  review.Summary,
+		Verdict:  review.Verdict,
+		Findings: review.Findings,
+	}
+	data, err := json.MarshalIndent(dump, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0600)
+}
+
+func (p *Pipeline) loadReview(path string) (*models.FinalReview, error) {
+	data, err := os.ReadFile(path) // #nosec G304 -- path is a CLI flag provided by the operator
+	if err != nil {
+		return nil, err
+	}
+	var dump finalReviewDump
+	if err := json.Unmarshal(data, &dump); err != nil {
+		return nil, err
+	}
+	return &models.FinalReview{
+		Summary:  dump.Summary,
+		Verdict:  dump.Verdict,
+		Findings: dump.Findings,
+	}, nil
 }
 
 func (p *Pipeline) prepareBranch() error {

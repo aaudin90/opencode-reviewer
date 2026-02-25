@@ -17,6 +17,7 @@ type Config struct {
 	OpenCode   OpenCodeConfig    `toml:"opencode"`
 	Git        GitConfig         `toml:"git"`
 	Pipeline   PipelineConfig    `toml:"pipeline"`
+	GitLab     GitLabConfig      `toml:"gitlab"`
 }
 
 // Load reads config from a TOML file at path and applies defaults.
@@ -76,6 +77,10 @@ func applyDefaults(cfg *Config) {
 //	REVIEW_GIT_REMOTE                → git.remote
 //	REVIEW_BRANCH                    → git.branch
 //	REVIEW_GIT_BASE_BRANCH           → git.base_branch
+//	REVIEW_GITLAB_URL                → gitlab.url
+//	REVIEW_GITLAB_TOKEN              → gitlab.token
+//	REVIEW_GITLAB_PROJECT_ID         → gitlab.project_id
+//	REVIEW_GITLAB_CLEAR_COMMENTS     → gitlab.clear_comments
 func ApplyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("REVIEW_PROJECT_DIR"); v != "" {
 		cfg.ProjectDir = v
@@ -125,5 +130,23 @@ func ApplyEnvOverrides(cfg *Config) {
 
 	if v := os.Getenv("REVIEW_GIT_BASE_BRANCH"); v != "" {
 		cfg.Git.BaseBranch = v
+	}
+
+	if v := os.Getenv("REVIEW_GITLAB_URL"); v != "" {
+		cfg.GitLab.URL = v
+	}
+
+	if v := os.Getenv("REVIEW_GITLAB_TOKEN"); v != "" {
+		cfg.GitLab.Token = v
+	}
+
+	if v := os.Getenv("REVIEW_GITLAB_PROJECT_ID"); v != "" {
+		if id, err := strconv.Atoi(v); err == nil {
+			cfg.GitLab.ProjectID = id
+		}
+	}
+
+	if v := os.Getenv("REVIEW_GITLAB_CLEAR_COMMENTS"); v != "" {
+		cfg.GitLab.ClearComments = v == "true" || v == "1"
 	}
 }
