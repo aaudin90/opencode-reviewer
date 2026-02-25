@@ -134,6 +134,15 @@ func retryPromptFor(toolName string) string {
 	)
 }
 
+func jsonFallbackPromptFor(toolName string) string {
+	return fmt.Sprintf(
+		"You failed to call the `%s` tool. "+
+			"Respond with ONLY a valid JSON object using the exact same schema as the `%s` tool arguments. "+
+			"No prose, no markdown fences — just the raw JSON object.",
+		toolName, toolName,
+	)
+}
+
 // Run executes a single review and streams events on the returned channel.
 // The channel is closed after the final event (RunEvent.Final or RunEvent.Err).
 func (r *Runner) Run(ctx context.Context, req RunRequest) <-chan RunEvent {
@@ -160,7 +169,6 @@ func (r *Runner) run(ctx context.Context, req RunRequest, out chan<- RunEvent) {
 	slog.Info("session created", "id", sessionID, "prompt", req.PromptPath)
 
 	sseClient := sse.New(r.httpClient, r.baseURL)
-	var lastResp *messageResponse
 
 	for attempt := range maxToolCallRetries {
 		attemptCtx, attemptCancel := context.WithCancel(ctx)
@@ -200,10 +208,8 @@ func (r *Runner) run(ctx context.Context, req RunRequest, out chan<- RunEvent) {
 			out <- RunEvent{Err: fmt.Errorf("send message: %w", err)}
 			return
 		}
-		lastResp = resp
-
 		t := resp.Info.Tokens
-		slog.Info("message completed", "message", resp.Info.ID, "cost", resp.Info.Cost,
+		slog.Info("message completed", "message", resp.Info.ID,
 			"tokens_input", t.Input, "tokens_output", t.Output)
 
 		// After sendMessage completes, the tool call event should already be buffered.
@@ -243,26 +249,35 @@ func (r *Runner) run(ctx context.Context, req RunRequest, out chan<- RunEvent) {
 		}
 	}
 
-	// Fallback: agent did not call the tool after all retries — use text response.
-	slog.Warn("all tool call retries exhausted, falling back to text output",
+	// Fallback: agent did not call the tool after all retries — request JSON response.
+	slog.Warn("all tool call retries exhausted, requesting JSON fallback",
 		"tool", req.ToolName, "session", sessionID)
-	r.cleanupSession(sessionID)
 
-	fallbackText := ""
-	if lastResp != nil {
-		fallbackText = r.extractText(lastResp.Parts)
-		t := lastResp.Info.Tokens
-		slog.Info("review completed via text fallback",
-			"message", lastResp.Info.ID,
-			"length", len(fallbackText),
-			"cost", lastResp.Info.Cost,
-			"tokens_input", t.Input,
-			"tokens_output", t.Output,
-			"tokens_reasoning", t.Reasoning,
-			"tokens_cache_read", t.Cache.Read,
-			"tokens_cache_write", t.Cache.Write,
-		)
+	resp, err := r.sendMessage(ctx, sessionID, RunRequest{
+		Prompt:    jsonFallbackPromptFor(req.ToolName),
+		AgentName: req.AgentName,
+	})
+	if err != nil {
+		r.cleanupSession(sessionID)
+		out <- RunEvent{Err: fmt.Errorf("json fallback message: %w", err)}
+		return
 	}
+
+	cost, tokens, statsErr := r.getSessionStats(sessionID)
+	r.cleanupSession(sessionID)
+	if statsErr != nil {
+		slog.Warn("failed to get session stats", "session", sessionID, "error", statsErr)
+	}
+
+	fallbackText := r.extractText(resp.Parts)
+	slog.Info("review completed via JSON fallback",
+		"session", sessionID, "prompt", req.PromptPath, "tool", req.ToolName,
+		"length", len(fallbackText),
+		"cost", cost,
+		"tokens_input", tokens.Input, "tokens_output", tokens.Output,
+		"tokens_reasoning", tokens.Reasoning,
+		"tokens_cache_read", tokens.Cache.Read, "tokens_cache_write", tokens.Cache.Write,
+	)
 
 	out <- RunEvent{Final: &RunResult{FallbackText: fallbackText}}
 }
