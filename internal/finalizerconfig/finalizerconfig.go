@@ -7,16 +7,30 @@ import (
 	"github.com/aaudin90/opencode-reviewer/internal/envconfig"
 )
 
-// Load reads the finalizer prompt from REVIEW_FINALIZER_CONFIG_PATH (priority),
-// REVIEW_FINALIZER_CONFIG env var, or the given configPath fallback.
-// Returns the built-in default prompt if no source is configured.
-func Load(configPath string) (string, error) {
-	data, err := envconfig.ReadEnvOrFile("REVIEW_FINALIZER_CONFIG_PATH", "REVIEW_FINALIZER_CONFIG", configPath)
+// Load reads the finalizer agent prompt by priority:
+//
+//	REVIEW_FINALIZER_PROMPT_PATH env (file) > inlinePrompt (TOML inline) > configPath (TOML path) > built-in default.
+func Load(configPath string, inlinePrompt string) (string, error) {
+	data, err := envconfig.Resolve("REVIEW_FINALIZER_PROMPT_PATH", inlinePrompt, configPath)
 	if err != nil {
-		return "", fmt.Errorf("load finalizer config: %w", err)
+		return "", fmt.Errorf("load finalizer prompt: %w", err)
 	}
 	if strings.TrimSpace(data) == "" {
 		return defaultPrompt, nil
+	}
+	return data, nil
+}
+
+// LoadMessage reads the finalizer user message by priority:
+//
+//	REVIEW_FINALIZER_MESSAGE_PATH env (file) > inlineMessage (TOML inline) > configPath (TOML path) > built-in default.
+func LoadMessage(configPath string, inlineMessage string) (string, error) {
+	data, err := envconfig.Resolve("REVIEW_FINALIZER_MESSAGE_PATH", inlineMessage, configPath)
+	if err != nil {
+		return "", fmt.Errorf("load finalizer message: %w", err)
+	}
+	if strings.TrimSpace(data) == "" {
+		return defaultMessage, nil
 	}
 	return data, nil
 }

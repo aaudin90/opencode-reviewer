@@ -38,9 +38,14 @@ TOML config file (`configs/example.toml`) with sections:
 | `[git]`      | `remote`               | Git remote name (default: origin)                     |
 | `[git]`      | `branch`               | Branch to review                                      |
 | `[git]`      | `base_branch`          | Base branch for diff (default: main)                  |
-| `[pipeline]` | `agent_config_path`      | Path to agent prompt file (relative to TOML file)       |
-| `[pipeline]` | `prompt_paths`           | List of prompt files; each triggers a parallel session  |
-| `[pipeline]` | `finalizer_config_path`  | Path to finalizer agent prompt file (relative to TOML) |
+| `[pipeline]` | `review_agent_prompt_path` | Path to reviewer agent prompt file (relative to TOML)    |
+| `[pipeline]` | `review_agent_prompt`      | Inline reviewer agent prompt (alternative to path)       |
+| `[pipeline]` | `review_message_paths`     | List of reviewer message files; each triggers a parallel session |
+| `[pipeline]` | `review_messages`          | Inline reviewer messages (alternative to paths)          |
+| `[pipeline]` | `finalizer_prompt_path`    | Path to finalizer agent prompt file (relative to TOML)   |
+| `[pipeline]` | `finalizer_prompt`         | Inline finalizer agent prompt (alternative to path)      |
+| `[pipeline]` | `finalizer_message_path`   | Path to finalizer user message file (relative to TOML)   |
+| `[pipeline]` | `finalizer_message`        | Inline finalizer user message (alternative to path)      |
 ### Environment Variables
 
 Config file is optional — all parameters can be set via environment variables.
@@ -60,19 +65,19 @@ Config file is optional — all parameters can be set via environment variables.
 | `REVIEW_OPENCODE_MIN_VERSION`     | Minimum opencode version (overrides `opencode.min_version`)              |
 | `REVIEW_PROVIDER_CONFIG_PATH`     | Path to provider JSON file (overrides `opencode.provider_config_path`)   |
 | `REVIEW_PROVIDER_CONFIG`          | Inline provider JSON config                                              |
-| `REVIEW_AGENT_CONFIG_PATH`        | Path to agent prompt file (overrides `pipeline.agent_config_path`)       |
-| `REVIEW_AGENT_CONFIG`             | Inline agent prompt or JSON with `"prompt"` field                        |
-| `REVIEW_PROMPT_PATHS`             | Comma-separated paths to prompt files (overrides `pipeline.prompt_paths`)|
-| `REVIEW_FINALIZER_CONFIG_PATH`    | Path to finalizer prompt file (overrides `pipeline.finalizer_config_path`) |
-| `REVIEW_FINALIZER_CONFIG`         | Inline finalizer prompt                                                  |
+| `REVIEW_AGENT_PROMPT_PATH`        | Path to reviewer agent prompt file (overrides `pipeline.review_agent_prompt_path`) |
+| `REVIEW_MESSAGE_PATHS`            | Comma-separated paths to reviewer message files (overrides `pipeline.review_message_paths`) |
+| `REVIEW_FINALIZER_PROMPT_PATH`    | Path to finalizer agent prompt file (overrides `pipeline.finalizer_prompt_path`) |
+| `REVIEW_FINALIZER_MESSAGE_PATH`   | Path to finalizer user message file (overrides `pipeline.finalizer_message_path`) |
 
 ### Priority Order
 
 - **Branch**: `--branch` CLI flag > `REVIEW_BRANCH` env > `git.branch` TOML field
 - **Provider config**: `REVIEW_PROVIDER_CONFIG_PATH` > `REVIEW_PROVIDER_CONFIG` > TOML path
-- **Agent prompt**: `REVIEW_AGENT_CONFIG_PATH` > `REVIEW_AGENT_CONFIG` > TOML path > built-in default
-- **Prompt paths**: `REVIEW_PROMPT_PATHS` > `pipeline.prompt_paths` TOML > built-in default
-- **Finalizer prompt**: `REVIEW_FINALIZER_CONFIG_PATH` > `REVIEW_FINALIZER_CONFIG` > TOML path > built-in default
+- **Agent prompt**: `REVIEW_AGENT_PROMPT_PATH` env > `review_agent_prompt` TOML > `review_agent_prompt_path` TOML > built-in default
+- **Messages**: `REVIEW_MESSAGE_PATHS` env > `review_messages` TOML > `review_message_paths` TOML > (none)
+- **Finalizer prompt**: `REVIEW_FINALIZER_PROMPT_PATH` env > `finalizer_prompt` TOML > `finalizer_prompt_path` TOML > built-in default
+- **Finalizer message**: `REVIEW_FINALIZER_MESSAGE_PATH` env > `finalizer_message` TOML > `finalizer_message_path` TOML > built-in default
 - **All other ENV vars**: override TOML value if set
 
 ## Commit Format

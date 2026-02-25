@@ -37,3 +37,35 @@ func ReadEnvOrFile(fileEnvKey, inlineEnvKey, fallbackPath string) (string, error
 
 	return "", nil
 }
+
+// Resolve loads a string value by priority:
+//  1. envPathKey — env var with file path → read file
+//  2. inlineValue — inline value from TOML (if non-empty) → return as-is
+//  3. fallbackPath — file path from TOML → read file
+//
+// Returns empty string without error if none of the sources are set.
+func Resolve(envPathKey, inlineValue, fallbackPath string) (string, error) {
+	if path := os.Getenv(envPathKey); path != "" {
+		cleanPath := filepath.Clean(path)
+		data, err := os.ReadFile(cleanPath) // #nosec G304 G703 -- path from trusted env var
+		if err != nil {
+			return "", fmt.Errorf("read %s=%q: %w", envPathKey, path, err)
+		}
+		return string(data), nil
+	}
+
+	if inlineValue != "" {
+		return inlineValue, nil
+	}
+
+	if fallbackPath != "" {
+		cleanPath := filepath.Clean(fallbackPath)
+		data, err := os.ReadFile(cleanPath) // #nosec G304 -- path from trusted TOML config
+		if err != nil {
+			return "", fmt.Errorf("read config path %q: %w", fallbackPath, err)
+		}
+		return string(data), nil
+	}
+
+	return "", nil
+}

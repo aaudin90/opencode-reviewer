@@ -7,13 +7,13 @@ import (
 	"github.com/aaudin90/opencode-reviewer/internal/envconfig"
 )
 
-// Load reads agent prompt from REVIEW_AGENT_CONFIG_PATH (priority),
-// REVIEW_AGENT_CONFIG env var, or the given configPath fallback.
-// Returns the built-in default prompt if no source is configured.
-func Load(configPath string) (string, error) {
-	data, err := envconfig.ReadEnvOrFile("REVIEW_AGENT_CONFIG_PATH", "REVIEW_AGENT_CONFIG", configPath)
+// Load reads agent prompt by priority:
+//
+//	REVIEW_AGENT_PROMPT_PATH env (file) > inlinePrompt (TOML inline) > configPath (TOML path) > built-in default.
+func Load(configPath string, inlinePrompt string) (string, error) {
+	data, err := envconfig.Resolve("REVIEW_AGENT_PROMPT_PATH", inlinePrompt, configPath)
 	if err != nil {
-		return "", fmt.Errorf("load agent config: %w", err)
+		return "", fmt.Errorf("load agent prompt: %w", err)
 	}
 	if strings.TrimSpace(data) == "" {
 		return defaultPrompt, nil

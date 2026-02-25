@@ -58,13 +58,14 @@ Config file (TOML) sections:
     base_branch             Base branch for diff (default: main)
 
   [pipeline]
-    agent_config_path       Path to agent prompt file (relative to config file or absolute)
-                            If not set, the built-in default prompt is used.
-    prompt_paths            List of prompt files (relative to config file or absolute).
-                            Each file triggers a separate parallel review session.
-                            If not set, the built-in default review prompt is used.
-    finalizer_config_path   Path to finalizer agent prompt file (relative to config file or absolute)
-                            If not set, the built-in default finalizer prompt is used.
+    review_agent_prompt_path  Path to reviewer agent prompt file (relative to config file or absolute)
+    review_agent_prompt       Inline reviewer agent prompt (alternative to path)
+    review_message_paths      List of reviewer message files; each triggers a parallel session
+    review_messages           Inline reviewer messages (alternative to paths)
+    finalizer_prompt_path     Path to finalizer agent prompt file (relative to config file or absolute)
+    finalizer_prompt          Inline finalizer agent prompt (alternative to path)
+    finalizer_message_path    Path to finalizer user message file (relative to config file or absolute)
+    finalizer_message         Inline finalizer user message (alternative to path)
 
 Environment variables (override TOML values):
   REVIEW_PROJECT_DIR               Path to the project repository (overrides project_dir)
@@ -80,17 +81,17 @@ Environment variables (override TOML values):
   REVIEW_OPENCODE_MIN_VERSION      Minimum opencode version (overrides opencode.min_version)
   REVIEW_PROVIDER_CONFIG_PATH      Path to provider JSON file (overrides opencode.provider_config_path)
   REVIEW_PROVIDER_CONFIG           Inline provider JSON config
-  REVIEW_AGENT_CONFIG_PATH         Path to agent prompt file (overrides pipeline.agent_config_path)
-  REVIEW_AGENT_CONFIG              Inline agent prompt or JSON with "prompt" field
-  REVIEW_PROMPT_PATHS              Comma-separated paths to prompt files (overrides pipeline.prompt_paths)
-  REVIEW_FINALIZER_CONFIG_PATH     Path to finalizer prompt file (overrides pipeline.finalizer_config_path)
-  REVIEW_FINALIZER_CONFIG          Inline finalizer prompt
+  REVIEW_AGENT_PROMPT_PATH         Path to reviewer agent prompt file (overrides pipeline.review_agent_prompt_path)
+  REVIEW_MESSAGE_PATHS             Comma-separated paths to reviewer message files (overrides pipeline.review_message_paths)
+  REVIEW_FINALIZER_PROMPT_PATH     Path to finalizer agent prompt file (overrides pipeline.finalizer_prompt_path)
+  REVIEW_FINALIZER_MESSAGE_PATH    Path to finalizer user message file (overrides pipeline.finalizer_message_path)
 
-Priority: --branch flag > REVIEW_BRANCH env > git.branch TOML.
-Priority (provider): REVIEW_PROVIDER_CONFIG_PATH > REVIEW_PROVIDER_CONFIG > TOML path.
-Priority (agent):    REVIEW_AGENT_CONFIG_PATH > REVIEW_AGENT_CONFIG > TOML path > built-in default.
-Priority (prompts):  REVIEW_PROMPT_PATHS > pipeline.prompt_paths TOML > built-in default.
-Priority (finalizer): REVIEW_FINALIZER_CONFIG_PATH > REVIEW_FINALIZER_CONFIG > TOML path > built-in default.`),
+Priority (branch):            --branch flag > REVIEW_BRANCH env > git.branch TOML.
+Priority (provider):          REVIEW_PROVIDER_CONFIG_PATH > REVIEW_PROVIDER_CONFIG > TOML path.
+Priority (agent prompt):      REVIEW_AGENT_PROMPT_PATH > review_agent_prompt TOML > review_agent_prompt_path TOML > built-in default.
+Priority (messages):          REVIEW_MESSAGE_PATHS > review_messages TOML > review_message_paths TOML > (none).
+Priority (finalizer prompt):  REVIEW_FINALIZER_PROMPT_PATH > finalizer_prompt TOML > finalizer_prompt_path TOML > built-in default.
+Priority (finalizer message): REVIEW_FINALIZER_MESSAGE_PATH > finalizer_message TOML > finalizer_message_path TOML > built-in default.`),
 	)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -133,23 +134,30 @@ Priority (finalizer): REVIEW_FINALIZER_CONFIG_PATH > REVIEW_FINALIZER_CONFIG > T
 		os.Exit(1)
 	}
 
-	agentPath := resolveRelativePath(configDir, cfg.Pipeline.AgentConfigPath)
-	agentPrompt, err := agentconfig.Load(agentPath)
+	agentPath := resolveRelativePath(configDir, cfg.Pipeline.ReviewAgentPromptPath)
+	agentPrompt, err := agentconfig.Load(agentPath, cfg.Pipeline.ReviewAgentPrompt)
 	if err != nil {
-		slog.Error("failed to load agent config", "error", err)
+		slog.Error("failed to load agent prompt", "error", err)
 		os.Exit(1)
 	}
 
-	finalizerPath := resolveRelativePath(configDir, cfg.Pipeline.FinalizerConfigPath)
-	finalizerPrompt, err := finalizerconfig.Load(finalizerPath)
+	finalizerPath := resolveRelativePath(configDir, cfg.Pipeline.FinalizerPromptPath)
+	finalizerPrompt, err := finalizerconfig.Load(finalizerPath, cfg.Pipeline.FinalizerPrompt)
 	if err != nil {
-		slog.Error("failed to load finalizer config", "error", err)
+		slog.Error("failed to load finalizer prompt", "error", err)
 		os.Exit(1)
 	}
 
-	promptPaths, err := promptconfig.Load(configDir, cfg.Pipeline.PromptPaths)
+	messages, err := promptconfig.Load(configDir, cfg.Pipeline.ReviewMessagePaths, cfg.Pipeline.ReviewMessages)
 	if err != nil {
-		slog.Error("failed to load prompt paths", "error", err)
+		slog.Error("failed to load review messages", "error", err)
+		os.Exit(1)
+	}
+
+	finalizerMsgPath := resolveRelativePath(configDir, cfg.Pipeline.FinalizerMessagePath)
+	finalizerMessage, err := finalizerconfig.LoadMessage(finalizerMsgPath, cfg.Pipeline.FinalizerMessage)
+	if err != nil {
+		slog.Error("failed to load finalizer message", "error", err)
 		os.Exit(1)
 	}
 
@@ -180,13 +188,13 @@ Priority (finalizer): REVIEW_FINALIZER_CONFIG_PATH > REVIEW_FINALIZER_CONFIG > T
 		os.Exit(1)
 	}
 
-	if err := run(cfg, reviewerWS, finalizerWS, promptPaths, finalizerPrompt); err != nil {
+	if err := run(cfg, reviewerWS, finalizerWS, messages, finalizerMessage); err != nil {
 		slog.Error("review failed", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run(cfg *config.Config, reviewerWS, finalizerWS *workspace.Workspace, promptPaths []string, finalizerPrompt string) error {
+func run(cfg *config.Config, reviewerWS, finalizerWS *workspace.Workspace, messages []string, finalizerMessage string) error {
 	projectDir, err := filepath.Abs(cfg.ProjectDir)
 	if err != nil {
 		return fmt.Errorf("resolve project dir: %w", err)
@@ -203,13 +211,13 @@ func run(cfg *config.Config, reviewerWS, finalizerWS *workspace.Workspace, promp
 	finalizerRunner := runner.New(cfg.OpenCode, projectDir, finalizerWS)
 
 	p := pipeline.New(pipeline.Config{
-		GitClient:       gitClient,
-		Branch:          cfg.Git.Branch,
-		BaseBranch:      cfg.Git.BaseBranch,
-		Runner:          reviewerRunner,
-		FinalizerRunner: finalizerRunner,
-		PromptPaths:     promptPaths,
-		FinalizerPrompt: finalizerPrompt,
+		GitClient:        gitClient,
+		Branch:           cfg.Git.Branch,
+		BaseBranch:       cfg.Git.BaseBranch,
+		Runner:           reviewerRunner,
+		FinalizerRunner:  finalizerRunner,
+		Messages:         messages,
+		FinalizerMessage: finalizerMessage,
 	})
 
 	ctx := context.Background()
