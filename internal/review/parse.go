@@ -42,31 +42,35 @@ func ParseToolArgs(data json.RawMessage) *models.ReviewResult {
 	return result
 }
 
-// Parse converts the raw agent response into a ReviewResult.
-// It attempts a direct JSON unmarshal first; if that fails it tries to extract
-// a JSON array by locating the first '[' and last ']' in the response, which
-// handles cases where the model wraps output in markdown code fences or adds
-// surrounding prose.
+// Parse converts the raw JSON fallback response into a ReviewResult.
+// It attempts to unmarshal the response as a full submitReviewArgs object
+// (the same schema as the submit_review tool). If the JSON is valid and
+// contains at least a verdict and findings, the structured fields are
+// populated and Raw is left empty. Otherwise Raw is set as a fallback.
 func Parse(raw string) *models.ReviewResult {
-	result := &models.ReviewResult{Raw: raw}
+	cleaned := strings.TrimSpace(raw)
+	cleaned = stripCodeFence(cleaned)
 
-	cleaned := stripCodeFence(strings.TrimSpace(raw))
-	findings, err := unmarshalFindings(cleaned)
-	if err != nil {
-		extracted := extractJSONArray(cleaned)
-		if extracted == "" {
-			result.ParseErr = fmt.Errorf("parse agent response: %w", err)
-			return result
-		}
-		findings, err = unmarshalFindings(extracted)
-		if err != nil {
-			result.ParseErr = fmt.Errorf("parse agent response (extracted): %w", err)
+	var args submitReviewArgs
+	if err := json.Unmarshal([]byte(cleaned), &args); err == nil {
+		if args.Verdict != "" && len(args.Findings) > 0 {
+			result := &models.ReviewResult{
+				ReviewerName: args.ReviewerName,
+				Summary:      args.Summary,
+				Verdict:      args.Verdict,
+				Findings:     args.Findings,
+			}
+			if !validVerdicts[args.Verdict] {
+				result.ParseErr = fmt.Errorf("invalid verdict %q", args.Verdict)
+			}
 			return result
 		}
 	}
 
-	result.Findings = findings
-	return result
+	return &models.ReviewResult{
+		Raw:      raw,
+		ParseErr: fmt.Errorf("failed to parse JSON fallback response"),
+	}
 }
 
 // stripCodeFence removes a leading ```[lang] / ``` fence and the closing ```
@@ -81,23 +85,4 @@ func stripCodeFence(s string) string {
 	}
 	s = strings.TrimSuffix(s[newline+1:], "```")
 	return strings.TrimRight(s, " \t\n\r")
-}
-
-func unmarshalFindings(s string) ([]models.Finding, error) {
-	var findings []models.Finding
-	if err := json.Unmarshal([]byte(s), &findings); err != nil {
-		return nil, err
-	}
-	return findings, nil
-}
-
-// extractJSONArray locates the outermost JSON array in s by finding the first '['
-// and the last ']'. Returns empty string if not found.
-func extractJSONArray(s string) string {
-	start := strings.Index(s, "[")
-	end := strings.LastIndex(s, "]")
-	if start == -1 || end == -1 || end <= start {
-		return ""
-	}
-	return s[start : end+1]
 }

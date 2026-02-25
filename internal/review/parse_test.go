@@ -5,69 +5,88 @@ import (
 	"testing"
 )
 
-func TestParse_ValidJSON(t *testing.T) {
-	raw := `[{"file":"main.go","start_line":10,"end_line":10,"existing_code":"x := 1","confidence":"high","issue_content":"unused","recommendation":"remove it"}]`
+func TestParse_ValidFullJSON(t *testing.T) {
+	raw := `{
+		"reviewer_name": "security",
+		"summary": "Found issues",
+		"verdict": "request_changes",
+		"findings": [
+			{
+				"file": "main.go",
+				"start_line": 10,
+				"end_line": 12,
+				"existing_code": "x := 1",
+				"confidence": "high",
+				"issue_content": "unused variable",
+				"recommendation": "remove it"
+			}
+		]
+	}`
 
 	result := Parse(raw)
 
 	if result.ParseErr != nil {
 		t.Fatalf("ParseErr = %v, want nil", result.ParseErr)
+	}
+	if result.Raw != "" {
+		t.Errorf("Raw = %q, want empty for successful parse", result.Raw)
+	}
+	if result.ReviewerName != "security" {
+		t.Errorf("ReviewerName = %q, want %q", result.ReviewerName, "security")
+	}
+	if result.Summary != "Found issues" {
+		t.Errorf("Summary = %q, want %q", result.Summary, "Found issues")
+	}
+	if result.Verdict != "request_changes" {
+		t.Errorf("Verdict = %q, want %q", result.Verdict, "request_changes")
 	}
 	if len(result.Findings) != 1 {
 		t.Fatalf("len(Findings) = %d, want 1", len(result.Findings))
 	}
-	f := result.Findings[0]
-	if f.File != "main.go" {
-		t.Errorf("File = %q, want %q", f.File, "main.go")
-	}
-	if f.StartLine != 10 {
-		t.Errorf("StartLine = %d, want 10", f.StartLine)
-	}
-	if result.Raw != raw {
-		t.Errorf("Raw not preserved")
+	if result.Findings[0].File != "main.go" {
+		t.Errorf("Findings[0].File = %q, want %q", result.Findings[0].File, "main.go")
 	}
 }
 
-func TestParse_EmptyArray(t *testing.T) {
-	result := Parse("[]")
-
-	if result.ParseErr != nil {
-		t.Fatalf("ParseErr = %v, want nil", result.ParseErr)
-	}
-	if len(result.Findings) != 0 {
-		t.Errorf("len(Findings) = %d, want 0", len(result.Findings))
-	}
-}
-
-func TestParse_JSONWrappedInCodeFence(t *testing.T) {
-	raw := "```json\n[{\"file\":\"a.go\",\"start_line\":1,\"end_line\":1,\"existing_code\":\"x\",\"confidence\":\"high\",\"issue_content\":\"bad\",\"recommendation\":\"fix\"}]\n```"
-
-	result := Parse(raw)
-
-	if result.ParseErr != nil {
-		t.Fatalf("ParseErr = %v, want nil (extraction should succeed)", result.ParseErr)
-	}
-	if len(result.Findings) != 1 {
-		t.Errorf("len(Findings) = %d, want 1", len(result.Findings))
-	}
-}
-
-func TestParse_JSONWithSurroundingProse(t *testing.T) {
-	raw := `Here are the findings:
-[{"file":"b.go","start_line":5,"end_line":5,"existing_code":"y","confidence":"medium","issue_content":"oops","recommendation":"fix it"}]
-That's all.`
+func TestParse_ValidJSONInCodeFence(t *testing.T) {
+	raw := "```json\n" + `{"reviewer_name":"r","summary":"s","verdict":"approve","findings":[{"file":"a.go","start_line":1,"end_line":1,"existing_code":"x","confidence":"high","issue_content":"bad","recommendation":"fix"}]}` + "\n```"
 
 	result := Parse(raw)
 
 	if result.ParseErr != nil {
 		t.Fatalf("ParseErr = %v, want nil", result.ParseErr)
 	}
+	if result.Raw != "" {
+		t.Errorf("Raw = %q, want empty", result.Raw)
+	}
+	if result.Verdict != "approve" {
+		t.Errorf("Verdict = %q, want %q", result.Verdict, "approve")
+	}
 	if len(result.Findings) != 1 {
 		t.Errorf("len(Findings) = %d, want 1", len(result.Findings))
 	}
 }
 
-func TestParse_InvalidJSON_SetsParseErr(t *testing.T) {
+func TestParse_InvalidVerdict(t *testing.T) {
+	raw := `{"summary":"test","verdict":"reject","findings":[{"file":"a.go","start_line":1,"end_line":1,"existing_code":"x","confidence":"high","issue_content":"bad","recommendation":"fix"}]}`
+
+	result := Parse(raw)
+
+	if result.ParseErr == nil {
+		t.Fatal("ParseErr = nil, want non-nil for invalid verdict")
+	}
+	if result.Raw != "" {
+		t.Errorf("Raw = %q, want empty (fields are still populated)", result.Raw)
+	}
+	if result.Verdict != "reject" {
+		t.Errorf("Verdict = %q, want %q", result.Verdict, "reject")
+	}
+	if len(result.Findings) != 1 {
+		t.Errorf("len(Findings) = %d, want 1", len(result.Findings))
+	}
+}
+
+func TestParse_InvalidJSON(t *testing.T) {
 	raw := "not json at all"
 
 	result := Parse(raw)
@@ -83,13 +102,40 @@ func TestParse_InvalidJSON_SetsParseErr(t *testing.T) {
 	}
 }
 
-func TestParse_RawAlwaysPreserved(t *testing.T) {
-	raw := `[{"file":"c.go","start_line":2,"end_line":3,"existing_code":"z","confidence":"low","issue_content":"minor","recommendation":"consider"}]`
+func TestParse_EmptyString(t *testing.T) {
+	result := Parse("")
+
+	if result.ParseErr == nil {
+		t.Error("ParseErr = nil, want non-nil for empty input")
+	}
+	if result.Raw != "" {
+		t.Errorf("Raw = %q, want empty", result.Raw)
+	}
+}
+
+func TestParse_JSONWithoutVerdictAndFindings(t *testing.T) {
+	raw := `{"summary": "some summary"}`
 
 	result := Parse(raw)
 
+	if result.ParseErr == nil {
+		t.Error("ParseErr = nil, want non-nil when verdict and findings are missing")
+	}
 	if result.Raw != raw {
-		t.Error("Raw not preserved")
+		t.Errorf("Raw = %q, want %q", result.Raw, raw)
+	}
+}
+
+func TestParse_JSONWithEmptyFindings(t *testing.T) {
+	raw := `{"summary":"s","verdict":"approve","findings":[]}`
+
+	result := Parse(raw)
+
+	if result.ParseErr == nil {
+		t.Error("ParseErr = nil, want non-nil when findings are empty")
+	}
+	if result.Raw != raw {
+		t.Errorf("Raw = %q, want %q", result.Raw, raw)
 	}
 }
 

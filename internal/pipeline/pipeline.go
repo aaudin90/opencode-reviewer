@@ -199,7 +199,7 @@ func (p *Pipeline) runFinalizerReview(ctx context.Context, phase1Results []*mode
 	}
 
 	slog.Warn("finalizer: using text fallback")
-	return &models.FinalReview{Raw: runResult.FallbackText}, nil
+	return review.ParseFinal(runResult.FallbackText), nil
 }
 
 func (p *Pipeline) parseResult(runResult *runner.RunResult) *models.ReviewResult {
