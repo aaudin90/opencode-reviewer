@@ -15,6 +15,8 @@ internal/agentsmd/           → AGENTS.md & CLAUDE.md swap (empty for review)
 internal/agentconfig/        → Agent prompt loading (env / TOML path / file)
 internal/providerconfig/     → Provider JSON loading (env / TOML path / file)
 internal/workspace/          → Temporary workspace for opencode config
+internal/vcs/                → VCS publisher interface, line normalizer, Markdown formatting
+internal/vcs/gitlab/         → GitLab MR comments publisher (REST API client)
 configs/                     → TOML configs, provider.json, agent-prompt.md
 prompt-examples/             → Example prompt files for parallel review sessions
 prompts/                     → Prompt templates
@@ -46,6 +48,9 @@ TOML config file (`configs/example.toml`) with sections:
 | `[pipeline]` | `finalizer_prompt`         | Inline finalizer agent prompt (alternative to path)      |
 | `[pipeline]` | `finalizer_message_path`   | Path to finalizer user message file (relative to TOML)   |
 | `[pipeline]` | `finalizer_message`        | Inline finalizer user message (alternative to path)      |
+| `[gitlab]`   | `url`                      | GitLab instance URL (e.g. https://gitlab.example.com)    |
+| `[gitlab]`   | `token`                    | GitLab private access token                              |
+| `[gitlab]`   | `project_id`               | Numeric GitLab project ID                                |
 ### Environment Variables
 
 Config file is optional — all parameters can be set via environment variables.
@@ -69,6 +74,9 @@ Config file is optional — all parameters can be set via environment variables.
 | `REVIEW_MESSAGE_PATHS`            | Comma-separated paths to reviewer message files (overrides `pipeline.review_message_paths`) |
 | `REVIEW_FINALIZER_PROMPT_PATH`    | Path to finalizer agent prompt file (overrides `pipeline.finalizer_prompt_path`) |
 | `REVIEW_FINALIZER_MESSAGE_PATH`   | Path to finalizer user message file (overrides `pipeline.finalizer_message_path`) |
+| `REVIEW_GITLAB_URL`              | GitLab instance URL (overrides `gitlab.url`)                             |
+| `REVIEW_GITLAB_TOKEN`            | GitLab private access token (overrides `gitlab.token`)                   |
+| `REVIEW_GITLAB_PROJECT_ID`       | Numeric GitLab project ID (overrides `gitlab.project_id`)                |
 
 ### Priority Order
 

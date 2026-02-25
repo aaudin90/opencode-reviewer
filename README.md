@@ -49,6 +49,8 @@ REVIEW_PROVIDER_CONFIG_PATH=/path/to/provider.json \
 |---|---|---|
 | `--config FILE` | path | Path to TOML config file. Optional — all settings can be provided via environment variables. |
 | `--branch BRANCH` | string | Branch to review. Overrides `REVIEW_BRANCH` env and `git.branch` TOML. **Highest priority** for branch. |
+| `--review-dump FILE` | path | Save the final LLM review as JSON to FILE after the pipeline completes. Useful for capturing output to replay with `--fast-review`. |
+| `--fast-review FILE` | path | Skip the LLM pipeline and load the review from a previously saved JSON dump. Useful for iterating on VCS publishing without re-running LLM stages. |
 
 ## Configuration
 
@@ -92,6 +94,10 @@ project_dir = "/path/to/your/project"
   # finalizer_message_path = "finalizer-message.md"
   # finalizer_message      = "..."          # inline alternative
 
+# [gitlab]
+#   url        = "https://gitlab.example.com"
+#   token      = ""
+#   project_id = 0
 ```
 
 ### TOML Fields Reference
@@ -111,7 +117,7 @@ Arbitrary key-value pairs set as environment variables. Values override TOML con
 | Key | Default | Description |
 |---|---|---|
 | `endpoint` | — | URL of a running `opencode serve` instance. If set, the reviewer connects to it instead of starting a subprocess. |
-| `port` | `4096` | Port for the managed `opencode serve` subprocess (used when `endpoint` is empty). |
+| `port` | — | Port for the managed `opencode serve` subprocess (used when `endpoint` is empty). If not set, a free port is allocated dynamically by the OS. |
 | `model` | — | LLM model identifier passed to OpenCode (e.g. `llm-proxy/kimi-k2.5`). |
 | `binary` | `opencode` | Path to the OpenCode CLI binary. Resolved via `PATH` if not absolute. |
 | `stage_timeout` | `600` | Maximum seconds allowed for a single review session. |
@@ -140,6 +146,15 @@ Arbitrary key-value pairs set as environment variables. Values override TOML con
 | `finalizer_message_path` | — | Path to the finalizer user message file. Relative to the TOML file, or absolute. If not set, the built-in default message is used. |
 | `finalizer_message` | — | Inline finalizer user message text. If set, `finalizer_message_path` is ignored (but env path still takes priority). |
 
+#### `[gitlab]`
+
+| Key | Default | Description |
+|---|---|---|
+| `url` | — | GitLab instance URL (e.g. `https://gitlab.example.com`). |
+| `token` | — | GitLab private access token for API authentication. |
+| `project_id` | — | Numeric GitLab project ID. |
+| `clear_comments` | `false` | Delete open, unanswered discussions on the MR before posting the new review. |
+
 ### Environment Variables
 
 All environment variables override their TOML counterparts when set.
@@ -163,6 +178,10 @@ All environment variables override their TOML counterparts when set.
 | `REVIEW_MESSAGE_PATHS` | `pipeline.review_message_paths` | Comma-separated paths to reviewer message files. Relative to CWD. |
 | `REVIEW_FINALIZER_PROMPT_PATH` | `pipeline.finalizer_prompt_path` | Path to finalizer agent prompt file. |
 | `REVIEW_FINALIZER_MESSAGE_PATH` | `pipeline.finalizer_message_path` | Path to finalizer user message file. |
+| `REVIEW_GITLAB_URL` | `gitlab.url` | GitLab instance URL. |
+| `REVIEW_GITLAB_TOKEN` | `gitlab.token` | GitLab private access token. |
+| `REVIEW_GITLAB_PROJECT_ID` | `gitlab.project_id` | Numeric GitLab project ID. |
+| `REVIEW_GITLAB_CLEAR_COMMENTS` | `gitlab.clear_comments` | Set to `true` or `1` to enable clearing open MR discussions before posting. |
 
 ### Priority Order
 
@@ -303,6 +322,8 @@ internal/promptconfig/       Reviewer message loading
 internal/envconfig/          Shared ENV-or-file resolution logic
 internal/agentsmd/           AGENTS.md / CLAUDE.md swap for review workspace
 internal/workspace/          Temporary OpenCode workspace setup
+internal/vcs/                VCS publisher interface, line normalizer, Markdown formatting
+internal/vcs/gitlab/         GitLab MR comments publisher (REST API client)
 configs/                     TOML configs and provider.json examples
 prompt-examples/             Ready-made prompt files for parallel sessions
 ```

@@ -22,6 +22,10 @@
 #   REVIEW_MESSAGE_PATHS             Comma-separated paths to reviewer message files
 #   REVIEW_FINALIZER_PROMPT_PATH     Path to finalizer agent prompt file
 #   REVIEW_FINALIZER_MESSAGE_PATH    Path to finalizer user message file
+#   REVIEW_GITLAB_URL                GitLab instance URL
+#   REVIEW_GITLAB_TOKEN              GitLab private access token
+#   REVIEW_GITLAB_PROJECT_ID         Numeric GitLab project ID
+#   REVIEW_GITLAB_CLEAR_COMMENTS     Clear open MR discussions before posting (true/1)
 #
 # Priority (branch):            --branch flag > REVIEW_BRANCH env > git.branch TOML.
 # Priority (provider):          REVIEW_PROVIDER_CONFIG_PATH > REVIEW_PROVIDER_CONFIG > TOML path.
@@ -119,3 +123,20 @@ project_dir = "/path/to/your/project"
   # finalizer_message: inline finalizer user message (alternative to path).
   # If set, finalizer_message_path is ignored (but env path still takes priority).
   # finalizer_message = "Merge and deduplicate the following findings..."
+
+# [gitlab]
+#   # url: GitLab instance URL.
+#   # Env: REVIEW_GITLAB_URL
+#   url = "https://gitlab.example.com"
+#
+#   # token: GitLab private access token.
+#   # Env: REVIEW_GITLAB_TOKEN
+#   token = ""
+#
+#   # project_id: numeric GitLab project ID.
+#   # Env: REVIEW_GITLAB_PROJECT_ID
+#   project_id = 0
+#
+#   # clear_comments: delete open unanswered discussions before posting.
+#   # Env: REVIEW_GITLAB_CLEAR_COMMENTS
+#   # clear_comments = false
