@@ -77,6 +77,7 @@ Config file is optional — all parameters can be set via environment variables.
 | `REVIEW_GITLAB_URL`              | GitLab instance URL (overrides `gitlab.url`)                             |
 | `REVIEW_GITLAB_TOKEN`            | GitLab private access token (overrides `gitlab.token`)                   |
 | `REVIEW_GITLAB_PROJECT_ID`       | Numeric GitLab project ID (overrides `gitlab.project_id`)                |
+| `REVIEW_GITLAB_CLEAR_COMMENTS`  | Set `true` or `1` to clear open MR discussions before posting (overrides `gitlab.clear_comments`) |
 
 ### Priority Order
 
