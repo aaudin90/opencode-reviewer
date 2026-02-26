@@ -1,0 +1,30 @@
+FROM golang:1.25-bookworm AS builder
+
+WORKDIR /app
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+RUN CGO_ENABLED=0 go build -o /app/build/opencode-reviewer ./cmd/reviewer
+
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git ca-certificates curl && rm -rf /var/lib/apt/lists/*
+
+ARG TARGETARCH
+RUN case "${TARGETARCH}" in \
+    amd64) ARCH=x64 ;; \
+    arm64) ARCH=arm64 ;; \
+    *) echo "Unsupported arch: ${TARGETARCH}" && exit 1 ;; \
+  esac && \
+  curl -fsSL "https://github.com/anomalyco/opencode/releases/download/v1.2.10/opencode-linux-${ARCH}.tar.gz" \
+    | tar -xzC /usr/local/bin && \
+  chmod +x /usr/local/bin/opencode
+
+COPY --from=builder /app/build/opencode-reviewer /usr/local/bin/opencode-reviewer
+
+RUN mkdir -p /project
+
+WORKDIR /project
