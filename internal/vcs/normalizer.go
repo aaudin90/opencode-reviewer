@@ -14,6 +14,103 @@ var hunkHeaderRe = regexp.MustCompile(`^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@`)
 
 // Normalizer corrects start_line / end_line in findings by matching
 // existing_code against the actual diff content.
+//
+// # Problem
+//
+// LLMs return findings with ExistingCode + StartLine, but the line numbers are
+// often inaccurate:
+//   - Off by N (LLM counted 10, actual is 3)
+//   - Old/new confusion (deleted line reported with new-side number)
+//   - Path prefix mismatch ("main.go" vs "src/main.go")
+//
+// Normalizer fixes this by anchoring to the actual unified diff text.
+//
+// # Step 1 — Index construction (NewNormalizer)
+//
+// Each FileDiff.Diff is parsed into a []DiffLine by parseDiffLines.
+// Counter rules while scanning the raw diff:
+//
+//	'+' line  →  newNum++        (OldNum = 0, line exists only in new version)
+//	'-' line  →  oldNum++        (NewNum = 0, line exists only in old version)
+//	' ' line  →  oldNum++, newNum++  (context, present in both versions)
+//
+// Example for "@@ -1,5 +1,7 @@":
+//
+//	raw line               OldNum  NewNum  Origin
+//	" package main"            1       1     " "
+//	""  (empty context)        2       2     " "
+//	"+import \"fmt\""          0       3     "+"
+//	"+"  (empty added)         0       4     "+"
+//	" func main() {"           3       5     " "
+//	"-\tprintln(\"hello\")"    4       0     "-"
+//	"+\tfmt.Println(\"hello\")"0       6     "+"
+//	" }"                       5       7     " "
+//
+// Renamed files are tracked separately in fileOldPaths (newPath → oldPath).
+//
+// # Step 2 — File resolution (resolveFileLines)
+//
+// The finding's File path may not exactly match the diff key, so resolution
+// is attempted in three passes:
+//
+//  1. Exact match:  fileLines[filePath]
+//  2. Suffix match: any diff key that ends with "/filePath"
+//     (LLM omitted a directory prefix, e.g. finding="main.go", diff="src/main.go")
+//  3. Strip one leading segment from filePath and repeat passes 1–2
+//     (LLM added an extra prefix, e.g. finding="a/src/main.go", diff="src/main.go")
+//
+// # Step 3 — Normalisation pipeline
+//
+//	finding: {File:"main.go", StartLine:10, ExistingCode:`import "fmt"`}
+//
+//	ExistingCode empty?
+//	├── YES → unchanged (nothing to anchor on)
+//	└── NO  →
+//	      resolveFileLines(File) → diffLines, ok
+//	      ├── ok=false → unchanged (file not in diff)
+//	      └── ok=true  →
+//	            verifyAtPosition: does ExistingCode match at StartLine?
+//	            ├── YES (NewNum or OldNum) → unchanged
+//	            └── NO  →
+//	                  searchAndCorrect: scan all diff lines for ExistingCode
+//	                  ├── found → update StartLine/EndLine → normalized ✓
+//	                  └── not found → unresolved (warning logged)
+//
+// # Content search (searchAndCorrect / searchAndCorrectDiff)
+//
+// Single-line ExistingCode: trim-compare against every DiffLine.Content.
+// Multi-line ExistingCode:  sliding window of len(codeLines) consecutive
+// DiffLines; windowMatch uses trimmed comparison for each pair.
+//
+// When multiple matches exist the one closest to the original StartLine
+// (minimum |lineNum(match) − StartLine|) is chosen, preferring the
+// LLM's intent over an arbitrary pick:
+//
+//	matches: [{idx:2, dist:7}, {idx:5, dist:4}]
+//	best   :  idx=5  (dist 4 is smaller)
+//
+// lineNum helper:  "+" → NewNum  |  "-" → OldNum  |  " " → NewNum
+//
+// # Normalize vs NormalizeDiff
+//
+//	Normalize      (for []FinalFinding — general reviewer output)
+//	  corrects:    f.StartLine, f.EndLine
+//	  lineNum():   unified — "+" and " " use NewNum, "-" uses OldNum
+//
+//	NormalizeDiff  (for []DiffFinding — GitLab inline comments)
+//	  corrects:    df.OldLine / df.NewLine / df.OldPath / df.NewPath / df.InDiff
+//	  extra steps:
+//	    • always resolves OldPath/NewPath (even when ExistingCode is empty)
+//	    • Origin "+" → NewLine=NewNum, OldLine=0  (added line)
+//	    • Origin "-" → OldLine=OldNum, NewLine=0  (deleted line)
+//	    • InDiff=true  when the line is inside a hunk → inline posting possible
+//	    • InDiff=false when outside any hunk → GitLab requires a regular comment
+//
+// # Log counters
+//
+//	normalized  — position was corrected via content search
+//	unchanged   — position was already correct (or ExistingCode is empty)
+//	unresolved  — ExistingCode not found anywhere in the diff (warning emitted)
 type Normalizer struct {
 	fileLines    map[string][]DiffLine
 	fileOldPaths map[string]string // new path → old path (only for renamed files)
