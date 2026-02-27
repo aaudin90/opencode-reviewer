@@ -182,6 +182,7 @@ All environment variables override their TOML counterparts when set.
 | `OR_GITLAB_TOKEN` | `gitlab.token` | GitLab private access token. |
 | `OR_GITLAB_PROJECT_ID` | `gitlab.project_id` | Numeric GitLab project ID. |
 | `OR_GITLAB_CLEAR_COMMENTS` | `gitlab.clear_comments` | Set to `true` or `1` to enable clearing open MR discussions before posting. |
+| `OR_SLOG_LEVEL` | — | Log level: `debug`, `info`, `warn`, `error`. Defaults to `info`. |
 
 ### Priority Order
 

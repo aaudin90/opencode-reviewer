@@ -36,6 +36,7 @@ TOML config file (`configs/example.toml`) with sections:
 | `[opencode]` | `binary`               | Path to opencode binary (default: opencode)           |
 | `[opencode]` | `stage_timeout`        | Max seconds per review stage (default: 600)           |
 | `[opencode]` | `max_steps`            | Max agent steps per session (default: 30)             |
+| `[opencode]` | `min_version`          | Minimum required opencode version (semver)            |
 | `[opencode]` | `provider_config_path` | Path to provider JSON config (relative to TOML file)  |
 | `[git]`      | `remote`               | Git remote name (default: origin)                     |
 | `[git]`      | `branch`               | Branch to review                                      |
@@ -51,6 +52,7 @@ TOML config file (`configs/example.toml`) with sections:
 | `[gitlab]`   | `url`                      | GitLab instance URL (e.g. https://gitlab.example.com)    |
 | `[gitlab]`   | `token`                    | GitLab private access token                              |
 | `[gitlab]`   | `project_id`               | Numeric GitLab project ID                                |
+| `[gitlab]`   | `clear_comments`           | Delete open MR discussions before posting (default: false) |
 ### Environment Variables
 
 Config file is optional — all parameters can be set via environment variables.
@@ -78,6 +80,7 @@ Config file is optional — all parameters can be set via environment variables.
 | `OR_GITLAB_TOKEN`                 | GitLab private access token (overrides `gitlab.token`)                   |
 | `OR_GITLAB_PROJECT_ID`            | Numeric GitLab project ID (overrides `gitlab.project_id`)                |
 | `OR_GITLAB_CLEAR_COMMENTS`        | Set `true` or `1` to clear open MR discussions before posting (overrides `gitlab.clear_comments`) |
+| `OR_SLOG_LEVEL`                   | Log level: `debug`, `info`, `warn`, `error` (default: `info`)            |
 
 ### Priority Order
 

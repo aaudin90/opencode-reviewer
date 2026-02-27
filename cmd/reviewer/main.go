@@ -54,6 +54,7 @@ Config file (TOML) sections:
     binary                  Path to opencode binary (default: opencode)
     stage_timeout           Timeout per stage in seconds (default: 600)
     max_steps               Max agent steps per session (default: 30)
+    min_version             Minimum required opencode version (semver)
     provider_config_path    Path to provider JSON config (relative to config file or absolute)
 
   [git]
@@ -99,6 +100,7 @@ Environment variables (override TOML values):
   OR_GITLAB_TOKEN              GitLab private access token (overrides gitlab.token)
   OR_GITLAB_PROJECT_ID         Numeric GitLab project ID (overrides gitlab.project_id)
   OR_GITLAB_CLEAR_COMMENTS     Clear open MR discussions before posting (true/1 to enable)
+  OR_SLOG_LEVEL                Log level: debug, info, warn, error (default: info)
 
 Debug flags:
   --review-dump FILE    Save final review JSON to FILE after LLM pipeline (for replay with --fast-review).
