@@ -147,10 +147,29 @@ func (c *Client) doGet(ctx context.Context, path string, query url.Values) ([]by
 	return c.do(req)
 }
 
-// ClearMRComments deletes open, unanswered discussions on the given MR.
-// It pages through all discussions and removes those that are clearable (single
-// non-system, unresolved note with no replies). Returns the count of deleted notes.
+// GetCurrentUser returns information about the authenticated user.
+func (c *Client) GetCurrentUser(ctx context.Context) (*CurrentUser, error) {
+	body, err := c.doGet(ctx, "/user", nil)
+	if err != nil {
+		return nil, fmt.Errorf("get current user: %w", err)
+	}
+	var u CurrentUser
+	if err := json.Unmarshal(body, &u); err != nil {
+		return nil, fmt.Errorf("decode current user: %w", err)
+	}
+	return &u, nil
+}
+
+// ClearMRComments deletes open, unanswered discussions on the given MR that were
+// created by the current authenticated user. It pages through all discussions and
+// removes those that are clearable (single non-system, unresolved note with no replies)
+// and belong to the current user. Returns the count of deleted notes.
 func (c *Client) ClearMRComments(ctx context.Context, mrIID int) (int, error) {
+	me, err := c.GetCurrentUser(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("get current user for comment clearing: %w", err)
+	}
+
 	var deleted int
 	for page := 1; ; page++ {
 		q := url.Values{}
@@ -167,6 +186,9 @@ func (c *Client) ClearMRComments(ctx context.Context, mrIID int) (int, error) {
 		}
 		for _, d := range discussions {
 			if !d.clearable() {
+				continue
+			}
+			if d.Notes[0].Author.ID != me.ID {
 				continue
 			}
 			noteID := d.Notes[0].ID

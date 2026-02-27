@@ -1,10 +1,15 @@
 package gitlab
 
+type noteAuthor struct {
+	ID int `json:"id"`
+}
+
 type discussionNote struct {
-	ID         int  `json:"id"`
-	System     bool `json:"system"`
-	Resolvable bool `json:"resolvable"`
-	Resolved   bool `json:"resolved"`
+	ID         int        `json:"id"`
+	System     bool       `json:"system"`
+	Resolvable bool       `json:"resolvable"`
+	Resolved   bool       `json:"resolved"`
+	Author     noteAuthor `json:"author"`
 }
 
 type mrDiscussion struct {
