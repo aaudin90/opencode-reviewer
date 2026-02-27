@@ -32,12 +32,12 @@ type configShape struct {
 	Model    string                   `json:"model"`
 }
 
-// Load reads provider config JSON from REVIEW_PROVIDER_CONFIG_PATH (priority),
-// REVIEW_PROVIDER_CONFIG env var, or the given configPath fallback.
+// Load reads provider config JSON from OR_PROVIDER_CONFIG_PATH (priority),
+// OR_PROVIDER_CONFIG env var, or the given configPath fallback.
 // Returns validated json.RawMessage.
 // Returns nil without error if no source is available.
 func Load(configPath string) (json.RawMessage, error) {
-	raw, err := envconfig.ReadEnvOrFile("REVIEW_PROVIDER_CONFIG_PATH", "REVIEW_PROVIDER_CONFIG", configPath)
+	raw, err := envconfig.ReadEnvOrFile("OR_PROVIDER_CONFIG_PATH", "OR_PROVIDER_CONFIG", configPath)
 	if err != nil {
 		return nil, fmt.Errorf("load provider config: %w", err)
 	}

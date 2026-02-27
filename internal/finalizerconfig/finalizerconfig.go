@@ -9,9 +9,9 @@ import (
 
 // Load reads the finalizer agent prompt by priority:
 //
-//	REVIEW_FINALIZER_PROMPT_PATH env (file) > inlinePrompt (TOML inline) > configPath (TOML path) > built-in default.
+//	OR_FINALIZER_PROMPT_PATH env (file) > inlinePrompt (TOML inline) > configPath (TOML path) > built-in default.
 func Load(configPath string, inlinePrompt string) (string, error) {
-	data, err := envconfig.Resolve("REVIEW_FINALIZER_PROMPT_PATH", inlinePrompt, configPath)
+	data, err := envconfig.Resolve("OR_FINALIZER_PROMPT_PATH", inlinePrompt, configPath)
 	if err != nil {
 		return "", fmt.Errorf("load finalizer prompt: %w", err)
 	}
@@ -23,9 +23,9 @@ func Load(configPath string, inlinePrompt string) (string, error) {
 
 // LoadMessage reads the finalizer user message by priority:
 //
-//	REVIEW_FINALIZER_MESSAGE_PATH env (file) > inlineMessage (TOML inline) > configPath (TOML path) > built-in default.
+//	OR_FINALIZER_MESSAGE_PATH env (file) > inlineMessage (TOML inline) > configPath (TOML path) > built-in default.
 func LoadMessage(configPath string, inlineMessage string) (string, error) {
-	data, err := envconfig.Resolve("REVIEW_FINALIZER_MESSAGE_PATH", inlineMessage, configPath)
+	data, err := envconfig.Resolve("OR_FINALIZER_MESSAGE_PATH", inlineMessage, configPath)
 	if err != nil {
 		return "", fmt.Errorf("load finalizer message: %w", err)
 	}

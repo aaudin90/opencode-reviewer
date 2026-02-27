@@ -7,7 +7,7 @@ import (
 )
 
 func TestLoad_InlinePrompt(t *testing.T) {
-	t.Setenv("REVIEW_AGENT_PROMPT_PATH", "")
+	t.Setenv("OR_AGENT_PROMPT_PATH", "")
 
 	prompt, err := Load("", "You are a code reviewer.")
 	if err != nil {
@@ -20,7 +20,7 @@ func TestLoad_InlinePrompt(t *testing.T) {
 
 func TestLoad_InlineJSONReturnedAsRaw(t *testing.T) {
 	raw := `{"prompt": "Review code carefully."}`
-	t.Setenv("REVIEW_AGENT_PROMPT_PATH", "")
+	t.Setenv("OR_AGENT_PROMPT_PATH", "")
 
 	prompt, err := Load("", raw)
 	if err != nil {
@@ -38,7 +38,7 @@ func TestLoad_FromEnvFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Setenv("REVIEW_AGENT_PROMPT_PATH", path)
+	t.Setenv("OR_AGENT_PROMPT_PATH", path)
 
 	prompt, err := Load("", "inline prompt")
 	if err != nil {
@@ -50,7 +50,7 @@ func TestLoad_FromEnvFile(t *testing.T) {
 }
 
 func TestLoad_NeitherSet(t *testing.T) {
-	t.Setenv("REVIEW_AGENT_PROMPT_PATH", "")
+	t.Setenv("OR_AGENT_PROMPT_PATH", "")
 
 	prompt, err := Load("", "")
 	if err != nil {
@@ -62,7 +62,7 @@ func TestLoad_NeitherSet(t *testing.T) {
 }
 
 func TestLoad_WhitespaceOnlyFallsBackToDefault(t *testing.T) {
-	t.Setenv("REVIEW_AGENT_PROMPT_PATH", "")
+	t.Setenv("OR_AGENT_PROMPT_PATH", "")
 
 	prompt, err := Load("", "   ")
 	if err != nil {
@@ -80,7 +80,7 @@ func TestLoad_FromConfigPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Setenv("REVIEW_AGENT_PROMPT_PATH", "")
+	t.Setenv("OR_AGENT_PROMPT_PATH", "")
 
 	prompt, err := Load(path, "")
 	if err != nil {
@@ -92,7 +92,7 @@ func TestLoad_FromConfigPath(t *testing.T) {
 }
 
 func TestLoad_InlineOverridesConfigPath(t *testing.T) {
-	t.Setenv("REVIEW_AGENT_PROMPT_PATH", "")
+	t.Setenv("OR_AGENT_PROMPT_PATH", "")
 
 	prompt, err := Load("/nonexistent/path.md", "inline prompt wins")
 	if err != nil {
@@ -115,7 +115,7 @@ func TestLoad_EnvFileOverridesAll(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Setenv("REVIEW_AGENT_PROMPT_PATH", envPath)
+	t.Setenv("OR_AGENT_PROMPT_PATH", envPath)
 
 	prompt, err := Load(tomlPath, "inline content")
 	if err != nil {

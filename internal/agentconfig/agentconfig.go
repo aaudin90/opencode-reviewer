@@ -9,9 +9,9 @@ import (
 
 // Load reads agent prompt by priority:
 //
-//	REVIEW_AGENT_PROMPT_PATH env (file) > inlinePrompt (TOML inline) > configPath (TOML path) > built-in default.
+//	OR_AGENT_PROMPT_PATH env (file) > inlinePrompt (TOML inline) > configPath (TOML path) > built-in default.
 func Load(configPath string, inlinePrompt string) (string, error) {
-	data, err := envconfig.Resolve("REVIEW_AGENT_PROMPT_PATH", inlinePrompt, configPath)
+	data, err := envconfig.Resolve("OR_AGENT_PROMPT_PATH", inlinePrompt, configPath)
 	if err != nil {
 		return "", fmt.Errorf("load agent prompt: %w", err)
 	}

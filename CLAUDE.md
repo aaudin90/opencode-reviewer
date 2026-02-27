@@ -36,6 +36,7 @@ TOML config file (`configs/example.toml`) with sections:
 | `[opencode]` | `binary`               | Path to opencode binary (default: opencode)           |
 | `[opencode]` | `stage_timeout`        | Max seconds per review stage (default: 600)           |
 | `[opencode]` | `max_steps`            | Max agent steps per session (default: 30)             |
+| `[opencode]` | `min_version`          | Minimum required opencode version (semver)            |
 | `[opencode]` | `provider_config_path` | Path to provider JSON config (relative to TOML file)  |
 | `[git]`      | `remote`               | Git remote name (default: origin)                     |
 | `[git]`      | `branch`               | Branch to review                                      |
@@ -51,42 +52,44 @@ TOML config file (`configs/example.toml`) with sections:
 | `[gitlab]`   | `url`                      | GitLab instance URL (e.g. https://gitlab.example.com)    |
 | `[gitlab]`   | `token`                    | GitLab private access token                              |
 | `[gitlab]`   | `project_id`               | Numeric GitLab project ID                                |
+| `[gitlab]`   | `clear_comments`           | Delete open MR discussions before posting (default: false) |
 ### Environment Variables
 
 Config file is optional — all parameters can be set via environment variables.
 
 | Variable                          | Description                                                              |
 |-----------------------------------|--------------------------------------------------------------------------|
-| `REVIEW_PROJECT_DIR`              | Path to the project repository (overrides `project_dir`)                 |
-| `REVIEW_BRANCH`                   | Branch to review (overridden by `--branch` flag)                         |
-| `REVIEW_GIT_REMOTE`               | Git remote name (overrides `git.remote`)                                 |
-| `REVIEW_GIT_BASE_BRANCH`          | Base branch for diff (overrides `git.base_branch`)                       |
-| `REVIEW_OPENCODE_ENDPOINT`        | opencode API endpoint URL (overrides `opencode.endpoint`)                |
-| `REVIEW_OPENCODE_PORT`            | opencode port (overrides `opencode.port`)                                |
-| `REVIEW_OPENCODE_MODEL`           | LLM model identifier (overrides `opencode.model`)                        |
-| `REVIEW_OPENCODE_BINARY`          | Path to opencode binary (overrides `opencode.binary`)                    |
-| `REVIEW_OPENCODE_STAGE_TIMEOUT`   | Timeout per stage in seconds (overrides `opencode.stage_timeout`)        |
-| `REVIEW_OPENCODE_MAX_STEPS`       | Max agent steps per session (overrides `opencode.max_steps`)             |
-| `REVIEW_OPENCODE_MIN_VERSION`     | Minimum opencode version (overrides `opencode.min_version`)              |
-| `REVIEW_PROVIDER_CONFIG_PATH`     | Path to provider JSON file (overrides `opencode.provider_config_path`)   |
-| `REVIEW_PROVIDER_CONFIG`          | Inline provider JSON config                                              |
-| `REVIEW_AGENT_PROMPT_PATH`        | Path to reviewer agent prompt file (overrides `pipeline.review_agent_prompt_path`) |
-| `REVIEW_MESSAGE_PATHS`            | Comma-separated paths to reviewer message files (overrides `pipeline.review_message_paths`) |
-| `REVIEW_FINALIZER_PROMPT_PATH`    | Path to finalizer agent prompt file (overrides `pipeline.finalizer_prompt_path`) |
-| `REVIEW_FINALIZER_MESSAGE_PATH`   | Path to finalizer user message file (overrides `pipeline.finalizer_message_path`) |
-| `REVIEW_GITLAB_URL`              | GitLab instance URL (overrides `gitlab.url`)                             |
-| `REVIEW_GITLAB_TOKEN`            | GitLab private access token (overrides `gitlab.token`)                   |
-| `REVIEW_GITLAB_PROJECT_ID`       | Numeric GitLab project ID (overrides `gitlab.project_id`)                |
-| `REVIEW_GITLAB_CLEAR_COMMENTS`  | Set `true` or `1` to clear open MR discussions before posting (overrides `gitlab.clear_comments`) |
+| `OR_PROJECT_DIR`                  | Path to the project repository (overrides `project_dir`)                 |
+| `OR_BRANCH`                       | Branch to review (overridden by `--branch` flag)                         |
+| `OR_GIT_REMOTE`                   | Git remote name (overrides `git.remote`)                                 |
+| `OR_GIT_BASE_BRANCH`              | Base branch for diff (overrides `git.base_branch`)                       |
+| `OR_OPENCODE_ENDPOINT`            | opencode API endpoint URL (overrides `opencode.endpoint`)                |
+| `OR_OPENCODE_PORT`                | opencode port (overrides `opencode.port`)                                |
+| `OR_OPENCODE_MODEL`               | LLM model identifier (overrides `opencode.model`)                        |
+| `OR_OPENCODE_BINARY`              | Path to opencode binary (overrides `opencode.binary`)                    |
+| `OR_OPENCODE_STAGE_TIMEOUT`       | Timeout per stage in seconds (overrides `opencode.stage_timeout`)        |
+| `OR_OPENCODE_MAX_STEPS`           | Max agent steps per session (overrides `opencode.max_steps`)             |
+| `OR_OPENCODE_MIN_VERSION`         | Minimum opencode version (overrides `opencode.min_version`)              |
+| `OR_PROVIDER_CONFIG_PATH`         | Path to provider JSON file (overrides `opencode.provider_config_path`)   |
+| `OR_PROVIDER_CONFIG`              | Inline provider JSON config                                              |
+| `OR_AGENT_PROMPT_PATH`            | Path to reviewer agent prompt file (overrides `pipeline.review_agent_prompt_path`) |
+| `OR_MESSAGE_PATHS`                | Comma-separated paths to reviewer message files (overrides `pipeline.review_message_paths`) |
+| `OR_FINALIZER_PROMPT_PATH`        | Path to finalizer agent prompt file (overrides `pipeline.finalizer_prompt_path`) |
+| `OR_FINALIZER_MESSAGE_PATH`       | Path to finalizer user message file (overrides `pipeline.finalizer_message_path`) |
+| `OR_GITLAB_URL`                   | GitLab instance URL (overrides `gitlab.url`)                             |
+| `OR_GITLAB_TOKEN`                 | GitLab private access token (overrides `gitlab.token`)                   |
+| `OR_GITLAB_PROJECT_ID`            | Numeric GitLab project ID (overrides `gitlab.project_id`)                |
+| `OR_GITLAB_CLEAR_COMMENTS`        | Set `true` or `1` to clear open MR discussions before posting (overrides `gitlab.clear_comments`) |
+| `OR_SLOG_LEVEL`                   | Log level: `debug`, `info`, `warn`, `error` (default: `info`)            |
 
 ### Priority Order
 
-- **Branch**: `--branch` CLI flag > `REVIEW_BRANCH` env > `git.branch` TOML field
-- **Provider config**: `REVIEW_PROVIDER_CONFIG_PATH` > `REVIEW_PROVIDER_CONFIG` > TOML path
-- **Agent prompt**: `REVIEW_AGENT_PROMPT_PATH` env > `review_agent_prompt` TOML > `review_agent_prompt_path` TOML > built-in default
-- **Messages**: `REVIEW_MESSAGE_PATHS` env > `review_messages` TOML > `review_message_paths` TOML > (none)
-- **Finalizer prompt**: `REVIEW_FINALIZER_PROMPT_PATH` env > `finalizer_prompt` TOML > `finalizer_prompt_path` TOML > built-in default
-- **Finalizer message**: `REVIEW_FINALIZER_MESSAGE_PATH` env > `finalizer_message` TOML > `finalizer_message_path` TOML > built-in default
+- **Branch**: `--branch` CLI flag > `OR_BRANCH` env > `git.branch` TOML field
+- **Provider config**: `OR_PROVIDER_CONFIG_PATH` > `OR_PROVIDER_CONFIG` > TOML path
+- **Agent prompt**: `OR_AGENT_PROMPT_PATH` env > `review_agent_prompt` TOML > `review_agent_prompt_path` TOML > built-in default
+- **Messages**: `OR_MESSAGE_PATHS` env > `review_messages` TOML > `review_message_paths` TOML > (none)
+- **Finalizer prompt**: `OR_FINALIZER_PROMPT_PATH` env > `finalizer_prompt` TOML > `finalizer_prompt_path` TOML > built-in default
+- **Finalizer message**: `OR_FINALIZER_MESSAGE_PATH` env > `finalizer_message` TOML > `finalizer_message_path` TOML > built-in default
 - **All other ENV vars**: override TOML value if set
 
 ## Commit Format

@@ -123,8 +123,8 @@ func TestLoad_FromEnv(t *testing.T) {
 		"provider": {"p": {"models": {"m": {}}}},
 		"model": "p/m"
 	}`
-	t.Setenv("REVIEW_PROVIDER_CONFIG", val)
-	t.Setenv("REVIEW_PROVIDER_CONFIG_PATH", "")
+	t.Setenv("OR_PROVIDER_CONFIG", val)
+	t.Setenv("OR_PROVIDER_CONFIG_PATH", "")
 
 	data, err := Load("")
 	if err != nil {
@@ -146,8 +146,8 @@ func TestLoad_FromFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Setenv("REVIEW_PROVIDER_CONFIG_PATH", path)
-	t.Setenv("REVIEW_PROVIDER_CONFIG", "")
+	t.Setenv("OR_PROVIDER_CONFIG_PATH", path)
+	t.Setenv("OR_PROVIDER_CONFIG", "")
 
 	data, err := Load("")
 	if err != nil {
@@ -169,8 +169,8 @@ func TestLoad_FileOverridesEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Setenv("REVIEW_PROVIDER_CONFIG_PATH", path)
-	t.Setenv("REVIEW_PROVIDER_CONFIG", `{"provider": {"env-provider": {"models": {"m": {}}}}, "model": "env-provider/m"}`)
+	t.Setenv("OR_PROVIDER_CONFIG_PATH", path)
+	t.Setenv("OR_PROVIDER_CONFIG", `{"provider": {"env-provider": {"models": {"m": {}}}}, "model": "env-provider/m"}`)
 
 	data, err := Load("")
 	if err != nil {
@@ -187,8 +187,8 @@ func TestLoad_FileOverridesEnv(t *testing.T) {
 }
 
 func TestLoad_NeitherSet(t *testing.T) {
-	t.Setenv("REVIEW_PROVIDER_CONFIG", "")
-	t.Setenv("REVIEW_PROVIDER_CONFIG_PATH", "")
+	t.Setenv("OR_PROVIDER_CONFIG", "")
+	t.Setenv("OR_PROVIDER_CONFIG_PATH", "")
 
 	data, err := Load("")
 	if err != nil {
@@ -210,8 +210,8 @@ func TestLoad_FromConfigPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Setenv("REVIEW_PROVIDER_CONFIG", "")
-	t.Setenv("REVIEW_PROVIDER_CONFIG_PATH", "")
+	t.Setenv("OR_PROVIDER_CONFIG", "")
+	t.Setenv("OR_PROVIDER_CONFIG_PATH", "")
 
 	data, err := Load(path)
 	if err != nil {
@@ -235,8 +235,8 @@ func TestLoad_EnvOverridesConfigPath(t *testing.T) {
 		"provider": {"env-provider": {"models": {"m": {}}}},
 		"model": "env-provider/m"
 	}`
-	t.Setenv("REVIEW_PROVIDER_CONFIG", envVal)
-	t.Setenv("REVIEW_PROVIDER_CONFIG_PATH", "")
+	t.Setenv("OR_PROVIDER_CONFIG", envVal)
+	t.Setenv("OR_PROVIDER_CONFIG_PATH", "")
 
 	data, err := Load("/nonexistent/path.json")
 	if err != nil {

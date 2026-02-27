@@ -8,12 +8,12 @@ import (
 )
 
 // Load resolves reviewer messages by priority:
-//  1. REVIEW_MESSAGE_PATHS env (comma-separated file paths, relative to cwd) → read files → return contents
+//  1. OR_MESSAGE_PATHS env (comma-separated file paths, relative to cwd) → read files → return contents
 //  2. tomlInline (if non-empty) → return as-is
 //  3. tomlPaths (relative to configDir) → read files → return contents
 //  4. nil (caller decides what to do)
 func Load(configDir string, tomlPaths []string, tomlInline []string) ([]string, error) {
-	if raw := os.Getenv("REVIEW_MESSAGE_PATHS"); raw != "" {
+	if raw := os.Getenv("OR_MESSAGE_PATHS"); raw != "" {
 		cwd, err := os.Getwd()
 		if err != nil {
 			return nil, fmt.Errorf("get working directory: %w", err)
