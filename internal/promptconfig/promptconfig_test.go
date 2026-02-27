@@ -17,7 +17,7 @@ func TestLoad_EnvPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Setenv("REVIEW_MESSAGE_PATHS", f1+","+f2)
+	t.Setenv("OR_MESSAGE_PATHS", f1+","+f2)
 
 	result, err := Load(".", nil, nil)
 	if err != nil {
@@ -35,7 +35,7 @@ func TestLoad_EnvPaths(t *testing.T) {
 }
 
 func TestLoad_TomlInline(t *testing.T) {
-	t.Setenv("REVIEW_MESSAGE_PATHS", "")
+	t.Setenv("OR_MESSAGE_PATHS", "")
 
 	inline := []string{"Review for bugs", "Review for security"}
 	result, err := Load(".", nil, inline)
@@ -60,7 +60,7 @@ func TestLoad_TomlPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Setenv("REVIEW_MESSAGE_PATHS", "")
+	t.Setenv("OR_MESSAGE_PATHS", "")
 
 	result, err := Load(dir, []string{"msg1.md"}, nil)
 	if err != nil {
@@ -75,7 +75,7 @@ func TestLoad_TomlPaths(t *testing.T) {
 }
 
 func TestLoad_NothingSet(t *testing.T) {
-	t.Setenv("REVIEW_MESSAGE_PATHS", "")
+	t.Setenv("OR_MESSAGE_PATHS", "")
 
 	result, err := Load(".", nil, nil)
 	if err != nil {
@@ -93,7 +93,7 @@ func TestLoad_EnvOverridesTomlInline(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Setenv("REVIEW_MESSAGE_PATHS", f)
+	t.Setenv("OR_MESSAGE_PATHS", f)
 
 	inline := []string{"inline content"}
 	result, err := Load(".", []string{"/some/path.md"}, inline)
@@ -109,7 +109,7 @@ func TestLoad_EnvOverridesTomlInline(t *testing.T) {
 }
 
 func TestLoad_TomlInlineOverridesTomlPaths(t *testing.T) {
-	t.Setenv("REVIEW_MESSAGE_PATHS", "")
+	t.Setenv("OR_MESSAGE_PATHS", "")
 
 	inline := []string{"inline msg"}
 	result, err := Load(".", []string{"/nonexistent/path.md"}, inline)

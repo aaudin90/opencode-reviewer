@@ -36,10 +36,10 @@ make review BRANCH=my-feature-branch
 Without a config file, all settings can be provided via environment variables:
 
 ```bash
-REVIEW_PROJECT_DIR=/path/to/project \
-REVIEW_BRANCH=my-feature-branch \
-REVIEW_OPENCODE_MODEL=llm-proxy/kimi-k2.5 \
-REVIEW_PROVIDER_CONFIG_PATH=/path/to/provider.json \
+OR_PROJECT_DIR=/path/to/project \
+OR_BRANCH=my-feature-branch \
+OR_OPENCODE_MODEL=llm-proxy/kimi-k2.5 \
+OR_PROVIDER_CONFIG_PATH=/path/to/provider.json \
   ./build/opencode-reviewer
 ```
 
@@ -48,7 +48,7 @@ REVIEW_PROVIDER_CONFIG_PATH=/path/to/provider.json \
 | Flag | Type | Description |
 |---|---|---|
 | `--config FILE` | path | Path to TOML config file. Optional — all settings can be provided via environment variables. |
-| `--branch BRANCH` | string | Branch to review. Overrides `REVIEW_BRANCH` env and `git.branch` TOML. **Highest priority** for branch. |
+| `--branch BRANCH` | string | Branch to review. Overrides `OR_BRANCH` env and `git.branch` TOML. **Highest priority** for branch. |
 | `--review-dump FILE` | path | Save the final LLM review as JSON to FILE after the pipeline completes. Useful for capturing output to replay with `--fast-review`. |
 | `--fast-review FILE` | path | Skip the LLM pipeline and load the review from a previously saved JSON dump. Useful for iterating on VCS publishing without re-running LLM stages. |
 
@@ -130,7 +130,7 @@ Arbitrary key-value pairs set as environment variables. Values override TOML con
 | Key | Default | Description |
 |---|---|---|
 | `remote` | `origin` | Git remote name used for `git fetch`. |
-| `branch` | — | Branch to review. Can be overridden by `REVIEW_BRANCH` env or `--branch` flag. |
+| `branch` | — | Branch to review. Can be overridden by `OR_BRANCH` env or `--branch` flag. |
 | `base_branch` | `main` | Base branch to diff against. |
 
 #### `[pipeline]`
@@ -161,27 +161,27 @@ All environment variables override their TOML counterparts when set.
 
 | Variable | Overrides | Description |
 |---|---|---|
-| `REVIEW_PROJECT_DIR` | `project_dir` | Path to the project repository. |
-| `REVIEW_BRANCH` | `git.branch` | Branch to review. Overridden by `--branch` CLI flag. |
-| `REVIEW_GIT_REMOTE` | `git.remote` | Git remote name. |
-| `REVIEW_GIT_BASE_BRANCH` | `git.base_branch` | Base branch for diff. |
-| `REVIEW_OPENCODE_ENDPOINT` | `opencode.endpoint` | OpenCode API endpoint URL. |
-| `REVIEW_OPENCODE_PORT` | `opencode.port` | OpenCode subprocess port. |
-| `REVIEW_OPENCODE_MODEL` | `opencode.model` | LLM model identifier. |
-| `REVIEW_OPENCODE_BINARY` | `opencode.binary` | Path to the OpenCode binary. |
-| `REVIEW_OPENCODE_STAGE_TIMEOUT` | `opencode.stage_timeout` | Timeout per review session in seconds. |
-| `REVIEW_OPENCODE_MAX_STEPS` | `opencode.max_steps` | Max agent steps per session. |
-| `REVIEW_OPENCODE_MIN_VERSION` | `opencode.min_version` | Minimum required OpenCode version. |
-| `REVIEW_PROVIDER_CONFIG_PATH` | `opencode.provider_config_path` | Path to provider JSON file (takes priority over inline). |
-| `REVIEW_PROVIDER_CONFIG` | `opencode.provider_config_path` | Inline provider JSON config string. |
-| `REVIEW_AGENT_PROMPT_PATH` | `pipeline.review_agent_prompt_path` | Path to reviewer agent prompt file. |
-| `REVIEW_MESSAGE_PATHS` | `pipeline.review_message_paths` | Comma-separated paths to reviewer message files. Relative to CWD. |
-| `REVIEW_FINALIZER_PROMPT_PATH` | `pipeline.finalizer_prompt_path` | Path to finalizer agent prompt file. |
-| `REVIEW_FINALIZER_MESSAGE_PATH` | `pipeline.finalizer_message_path` | Path to finalizer user message file. |
-| `REVIEW_GITLAB_URL` | `gitlab.url` | GitLab instance URL. |
-| `REVIEW_GITLAB_TOKEN` | `gitlab.token` | GitLab private access token. |
-| `REVIEW_GITLAB_PROJECT_ID` | `gitlab.project_id` | Numeric GitLab project ID. |
-| `REVIEW_GITLAB_CLEAR_COMMENTS` | `gitlab.clear_comments` | Set to `true` or `1` to enable clearing open MR discussions before posting. |
+| `OR_PROJECT_DIR` | `project_dir` | Path to the project repository. |
+| `OR_BRANCH` | `git.branch` | Branch to review. Overridden by `--branch` CLI flag. |
+| `OR_GIT_REMOTE` | `git.remote` | Git remote name. |
+| `OR_GIT_BASE_BRANCH` | `git.base_branch` | Base branch for diff. |
+| `OR_OPENCODE_ENDPOINT` | `opencode.endpoint` | OpenCode API endpoint URL. |
+| `OR_OPENCODE_PORT` | `opencode.port` | OpenCode subprocess port. |
+| `OR_OPENCODE_MODEL` | `opencode.model` | LLM model identifier. |
+| `OR_OPENCODE_BINARY` | `opencode.binary` | Path to the OpenCode binary. |
+| `OR_OPENCODE_STAGE_TIMEOUT` | `opencode.stage_timeout` | Timeout per review session in seconds. |
+| `OR_OPENCODE_MAX_STEPS` | `opencode.max_steps` | Max agent steps per session. |
+| `OR_OPENCODE_MIN_VERSION` | `opencode.min_version` | Minimum required OpenCode version. |
+| `OR_PROVIDER_CONFIG_PATH` | `opencode.provider_config_path` | Path to provider JSON file (takes priority over inline). |
+| `OR_PROVIDER_CONFIG` | `opencode.provider_config_path` | Inline provider JSON config string. |
+| `OR_AGENT_PROMPT_PATH` | `pipeline.review_agent_prompt_path` | Path to reviewer agent prompt file. |
+| `OR_MESSAGE_PATHS` | `pipeline.review_message_paths` | Comma-separated paths to reviewer message files. Relative to CWD. |
+| `OR_FINALIZER_PROMPT_PATH` | `pipeline.finalizer_prompt_path` | Path to finalizer agent prompt file. |
+| `OR_FINALIZER_MESSAGE_PATH` | `pipeline.finalizer_message_path` | Path to finalizer user message file. |
+| `OR_GITLAB_URL` | `gitlab.url` | GitLab instance URL. |
+| `OR_GITLAB_TOKEN` | `gitlab.token` | GitLab private access token. |
+| `OR_GITLAB_PROJECT_ID` | `gitlab.project_id` | Numeric GitLab project ID. |
+| `OR_GITLAB_CLEAR_COMMENTS` | `gitlab.clear_comments` | Set to `true` or `1` to enable clearing open MR discussions before posting. |
 
 ### Priority Order
 
@@ -190,14 +190,14 @@ Settings are resolved in this order (first match wins):
 #### Branch
 
 ```
---branch flag  >  REVIEW_BRANCH env  >  git.branch TOML
+--branch flag  >  OR_BRANCH env  >  git.branch TOML
 ```
 
 #### Provider config (JSON)
 
 ```
-REVIEW_PROVIDER_CONFIG_PATH (reads file)
-  > REVIEW_PROVIDER_CONFIG (inline JSON string)
+OR_PROVIDER_CONFIG_PATH (reads file)
+  > OR_PROVIDER_CONFIG (inline JSON string)
   > opencode.provider_config_path TOML (reads file)
   > none (provider config is not set)
 ```
@@ -205,7 +205,7 @@ REVIEW_PROVIDER_CONFIG_PATH (reads file)
 #### Agent prompt (Phase 1 system prompt)
 
 ```
-REVIEW_AGENT_PROMPT_PATH (reads file)
+OR_AGENT_PROMPT_PATH (reads file)
   > review_agent_prompt TOML (inline text)
   > review_agent_prompt_path TOML (reads file)
   > built-in default prompt
@@ -214,7 +214,7 @@ REVIEW_AGENT_PROMPT_PATH (reads file)
 #### Reviewer messages (Phase 1 parallel sessions)
 
 ```
-REVIEW_MESSAGE_PATHS (comma-separated, relative to CWD, reads files)
+OR_MESSAGE_PATHS (comma-separated, relative to CWD, reads files)
   > review_messages TOML (inline list)
   > review_message_paths TOML (relative to TOML file, reads files)
   > none (pipeline requires at least one message)
@@ -223,7 +223,7 @@ REVIEW_MESSAGE_PATHS (comma-separated, relative to CWD, reads files)
 #### Finalizer prompt (Phase 2 system prompt)
 
 ```
-REVIEW_FINALIZER_PROMPT_PATH (reads file)
+OR_FINALIZER_PROMPT_PATH (reads file)
   > finalizer_prompt TOML (inline text)
   > finalizer_prompt_path TOML (reads file)
   > built-in default finalizer prompt
@@ -232,7 +232,7 @@ REVIEW_FINALIZER_PROMPT_PATH (reads file)
 #### Finalizer message (Phase 2 user message)
 
 ```
-REVIEW_FINALIZER_MESSAGE_PATH (reads file)
+OR_FINALIZER_MESSAGE_PATH (reads file)
   > finalizer_message TOML (inline text)
   > finalizer_message_path TOML (reads file)
   > built-in default finalizer message
@@ -254,7 +254,7 @@ The `[env]` section has **middle priority**: overrides TOML config fields, but i
 
 The agent prompt defines the reviewer agent's behaviour, review process, and output format. It instructs the agent to call the `submit_review` tool with structured findings. All Phase 1 sessions share the same agent prompt.
 
-- Configure via `pipeline.review_agent_prompt_path` (file) or `pipeline.review_agent_prompt` (inline) in TOML, or `REVIEW_AGENT_PROMPT_PATH` env (file path).
+- Configure via `pipeline.review_agent_prompt_path` (file) or `pipeline.review_agent_prompt` (inline) in TOML, or `OR_AGENT_PROMPT_PATH` env (file path).
 - If not configured, the built-in default prompt (`internal/agentconfig/default-prompt.md`) is used.
 
 ### Reviewer Messages (Phase 1 user messages, parallel sessions)
@@ -270,13 +270,13 @@ The repository includes ready-made examples in `prompt-examples/`:
 | `review-architecture.md` | Package structure, interfaces, separation of concerns |
 | `review-style.md` | Naming conventions, godoc, magic numbers, dead code |
 
-Configure via `pipeline.review_message_paths` (file paths) or `pipeline.review_messages` (inline) in TOML, or `REVIEW_MESSAGE_PATHS` env (comma-separated paths).
+Configure via `pipeline.review_message_paths` (file paths) or `pipeline.review_messages` (inline) in TOML, or `OR_MESSAGE_PATHS` env (comma-separated paths).
 
 ### Finalizer Prompt (Phase 2 system prompt)
 
 The finalizer prompt defines the finalizer agent's consolidation behaviour. It instructs the agent to deduplicate and merge Phase 1 findings and call the `submit_final_review` tool once.
 
-- Configure via `pipeline.finalizer_prompt_path` (file) or `pipeline.finalizer_prompt` (inline) in TOML, or `REVIEW_FINALIZER_PROMPT_PATH` env (file path).
+- Configure via `pipeline.finalizer_prompt_path` (file) or `pipeline.finalizer_prompt` (inline) in TOML, or `OR_FINALIZER_PROMPT_PATH` env (file path).
 - If not configured, the built-in default prompt (`internal/finalizerconfig/default-prompt.md`) is used.
 - An example finalizer prompt is available at `prompt-examples/finalizer.md`.
 
@@ -284,7 +284,7 @@ The finalizer prompt defines the finalizer agent's consolidation behaviour. It i
 
 The finalizer message is sent to the finalizer agent along with the Phase 1 results. It triggers the consolidation process.
 
-- Configure via `pipeline.finalizer_message_path` (file) or `pipeline.finalizer_message` (inline) in TOML, or `REVIEW_FINALIZER_MESSAGE_PATH` env (file path).
+- Configure via `pipeline.finalizer_message_path` (file) or `pipeline.finalizer_message` (inline) in TOML, or `OR_FINALIZER_MESSAGE_PATH` env (file path).
 - If not configured, the built-in default message (`internal/finalizerconfig/default-message.md`) is used.
 
 ## Development

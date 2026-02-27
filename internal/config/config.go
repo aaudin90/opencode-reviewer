@@ -61,92 +61,92 @@ func applyDefaults(cfg *Config) {
 }
 
 // ApplyEnvOverrides overrides config values with environment variables.
-// Must be called after applyEnv so that [env] values are visible as REVIEW_* variables.
+// Must be called after applyEnv so that [env] values are visible as OR_* variables.
 // Priority: system env > [env] section > TOML fields.
 //
 // Supported variables:
 //
-//	REVIEW_PROJECT_DIR               → project_dir
-//	REVIEW_OPENCODE_ENDPOINT         → opencode.endpoint
-//	REVIEW_OPENCODE_PORT             → opencode.port
-//	REVIEW_OPENCODE_MODEL            → opencode.model
-//	REVIEW_OPENCODE_BINARY           → opencode.binary
-//	REVIEW_OPENCODE_STAGE_TIMEOUT    → opencode.stage_timeout
-//	REVIEW_OPENCODE_MAX_STEPS        → opencode.max_steps
-//	REVIEW_OPENCODE_MIN_VERSION      → opencode.min_version
-//	REVIEW_GIT_REMOTE                → git.remote
-//	REVIEW_BRANCH                    → git.branch
-//	REVIEW_GIT_BASE_BRANCH           → git.base_branch
-//	REVIEW_GITLAB_URL                → gitlab.url
-//	REVIEW_GITLAB_TOKEN              → gitlab.token
-//	REVIEW_GITLAB_PROJECT_ID         → gitlab.project_id
-//	REVIEW_GITLAB_CLEAR_COMMENTS     → gitlab.clear_comments
+//	OR_PROJECT_DIR               → project_dir
+//	OR_OPENCODE_ENDPOINT         → opencode.endpoint
+//	OR_OPENCODE_PORT             → opencode.port
+//	OR_OPENCODE_MODEL            → opencode.model
+//	OR_OPENCODE_BINARY           → opencode.binary
+//	OR_OPENCODE_STAGE_TIMEOUT    → opencode.stage_timeout
+//	OR_OPENCODE_MAX_STEPS        → opencode.max_steps
+//	OR_OPENCODE_MIN_VERSION      → opencode.min_version
+//	OR_GIT_REMOTE                → git.remote
+//	OR_BRANCH                    → git.branch
+//	OR_GIT_BASE_BRANCH           → git.base_branch
+//	OR_GITLAB_URL                → gitlab.url
+//	OR_GITLAB_TOKEN              → gitlab.token
+//	OR_GITLAB_PROJECT_ID         → gitlab.project_id
+//	OR_GITLAB_CLEAR_COMMENTS     → gitlab.clear_comments
 func ApplyEnvOverrides(cfg *Config) {
-	if v := os.Getenv("REVIEW_PROJECT_DIR"); v != "" {
+	if v := os.Getenv("OR_PROJECT_DIR"); v != "" {
 		cfg.ProjectDir = v
 	}
 
-	if v := os.Getenv("REVIEW_OPENCODE_ENDPOINT"); v != "" {
+	if v := os.Getenv("OR_OPENCODE_ENDPOINT"); v != "" {
 		cfg.OpenCode.Endpoint = v
 	}
 
-	if v := os.Getenv("REVIEW_OPENCODE_PORT"); v != "" {
+	if v := os.Getenv("OR_OPENCODE_PORT"); v != "" {
 		if port, err := strconv.Atoi(v); err == nil {
 			cfg.OpenCode.Port = port
 		}
 	}
 
-	if v := os.Getenv("REVIEW_OPENCODE_MODEL"); v != "" {
+	if v := os.Getenv("OR_OPENCODE_MODEL"); v != "" {
 		cfg.OpenCode.Model = v
 	}
 
-	if v := os.Getenv("REVIEW_OPENCODE_BINARY"); v != "" {
+	if v := os.Getenv("OR_OPENCODE_BINARY"); v != "" {
 		cfg.OpenCode.Binary = v
 	}
 
-	if v := os.Getenv("REVIEW_OPENCODE_STAGE_TIMEOUT"); v != "" {
+	if v := os.Getenv("OR_OPENCODE_STAGE_TIMEOUT"); v != "" {
 		if t, err := strconv.Atoi(v); err == nil {
 			cfg.OpenCode.StageTimeout = t
 		}
 	}
 
-	if v := os.Getenv("REVIEW_OPENCODE_MAX_STEPS"); v != "" {
+	if v := os.Getenv("OR_OPENCODE_MAX_STEPS"); v != "" {
 		if s, err := strconv.Atoi(v); err == nil {
 			cfg.OpenCode.MaxSteps = s
 		}
 	}
 
-	if v := os.Getenv("REVIEW_OPENCODE_MIN_VERSION"); v != "" {
+	if v := os.Getenv("OR_OPENCODE_MIN_VERSION"); v != "" {
 		cfg.OpenCode.MinVersion = v
 	}
 
-	if v := os.Getenv("REVIEW_GIT_REMOTE"); v != "" {
+	if v := os.Getenv("OR_GIT_REMOTE"); v != "" {
 		cfg.Git.Remote = v
 	}
 
-	if v := os.Getenv("REVIEW_BRANCH"); v != "" {
+	if v := os.Getenv("OR_BRANCH"); v != "" {
 		cfg.Git.Branch = v
 	}
 
-	if v := os.Getenv("REVIEW_GIT_BASE_BRANCH"); v != "" {
+	if v := os.Getenv("OR_GIT_BASE_BRANCH"); v != "" {
 		cfg.Git.BaseBranch = v
 	}
 
-	if v := os.Getenv("REVIEW_GITLAB_URL"); v != "" {
+	if v := os.Getenv("OR_GITLAB_URL"); v != "" {
 		cfg.GitLab.URL = v
 	}
 
-	if v := os.Getenv("REVIEW_GITLAB_TOKEN"); v != "" {
+	if v := os.Getenv("OR_GITLAB_TOKEN"); v != "" {
 		cfg.GitLab.Token = v
 	}
 
-	if v := os.Getenv("REVIEW_GITLAB_PROJECT_ID"); v != "" {
+	if v := os.Getenv("OR_GITLAB_PROJECT_ID"); v != "" {
 		if id, err := strconv.Atoi(v); err == nil {
 			cfg.GitLab.ProjectID = id
 		}
 	}
 
-	if v := os.Getenv("REVIEW_GITLAB_CLEAR_COMMENTS"); v != "" {
+	if v := os.Getenv("OR_GITLAB_CLEAR_COMMENTS"); v != "" {
 		cfg.GitLab.ClearComments = v == "true" || v == "1"
 	}
 }

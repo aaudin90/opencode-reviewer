@@ -24,7 +24,7 @@ import (
 
 type CLI struct {
 	Config     string `kong:"optional,type='path',placeholder='FILE',help='Path to TOML config file. If omitted, all settings must be provided via environment variables.'"`
-	Branch     string `kong:"placeholder='BRANCH',help='Branch to review (overrides REVIEW_BRANCH env).'"`
+	Branch     string `kong:"placeholder='BRANCH',help='Branch to review (overrides OR_BRANCH env).'"`
 	ReviewDump string `kong:"optional,name='review-dump',type='path',placeholder='FILE',help='Save final review JSON to FILE (for fast-path debugging).'"`
 	FastReview string `kong:"optional,name='fast-review',type='path',placeholder='FILE',help='Skip LLM pipeline and load review from FILE (fast-path for debugging VCS).'"`
 }
@@ -40,7 +40,7 @@ Config file is optional: all settings can be provided via environment variables.
 
 Config file (TOML) sections:
 
-  project_dir               Path to the project repository (overridable via REVIEW_PROJECT_DIR)
+  project_dir               Path to the project repository (overridable via OR_PROJECT_DIR)
 
   [env]
     KEY = "VALUE"           Environment variables applied after TOML fields but before system env
@@ -78,38 +78,38 @@ Config file (TOML) sections:
     clear_comments            Delete open unanswered discussions before posting (default: false)
 
 Environment variables (override TOML values):
-  REVIEW_PROJECT_DIR               Path to the project repository (overrides project_dir)
-  REVIEW_BRANCH                    Branch to review (overridden by --branch flag)
-  REVIEW_GIT_REMOTE                Git remote name (overrides git.remote)
-  REVIEW_GIT_BASE_BRANCH           Base branch for diff (overrides git.base_branch)
-  REVIEW_OPENCODE_ENDPOINT         opencode API endpoint URL (overrides opencode.endpoint)
-  REVIEW_OPENCODE_PORT             opencode port (overrides opencode.port)
-  REVIEW_OPENCODE_MODEL            LLM model identifier (overrides opencode.model)
-  REVIEW_OPENCODE_BINARY           Path to opencode binary (overrides opencode.binary)
-  REVIEW_OPENCODE_STAGE_TIMEOUT    Timeout per stage in seconds (overrides opencode.stage_timeout)
-  REVIEW_OPENCODE_MAX_STEPS        Max agent steps per session (overrides opencode.max_steps)
-  REVIEW_OPENCODE_MIN_VERSION      Minimum opencode version (overrides opencode.min_version)
-  REVIEW_PROVIDER_CONFIG_PATH      Path to provider JSON file (overrides opencode.provider_config_path)
-  REVIEW_PROVIDER_CONFIG           Inline provider JSON config
-  REVIEW_AGENT_PROMPT_PATH         Path to reviewer agent prompt file (overrides pipeline.review_agent_prompt_path)
-  REVIEW_MESSAGE_PATHS             Comma-separated paths to reviewer message files (overrides pipeline.review_message_paths)
-  REVIEW_FINALIZER_PROMPT_PATH     Path to finalizer agent prompt file (overrides pipeline.finalizer_prompt_path)
-  REVIEW_FINALIZER_MESSAGE_PATH    Path to finalizer user message file (overrides pipeline.finalizer_message_path)
-  REVIEW_GITLAB_URL                GitLab instance URL (overrides gitlab.url)
-  REVIEW_GITLAB_TOKEN              GitLab private access token (overrides gitlab.token)
-  REVIEW_GITLAB_PROJECT_ID         Numeric GitLab project ID (overrides gitlab.project_id)
-  REVIEW_GITLAB_CLEAR_COMMENTS     Clear open MR discussions before posting (true/1 to enable)
+  OR_PROJECT_DIR               Path to the project repository (overrides project_dir)
+  OR_BRANCH                    Branch to review (overridden by --branch flag)
+  OR_GIT_REMOTE                Git remote name (overrides git.remote)
+  OR_GIT_BASE_BRANCH           Base branch for diff (overrides git.base_branch)
+  OR_OPENCODE_ENDPOINT         opencode API endpoint URL (overrides opencode.endpoint)
+  OR_OPENCODE_PORT             opencode port (overrides opencode.port)
+  OR_OPENCODE_MODEL            LLM model identifier (overrides opencode.model)
+  OR_OPENCODE_BINARY           Path to opencode binary (overrides opencode.binary)
+  OR_OPENCODE_STAGE_TIMEOUT    Timeout per stage in seconds (overrides opencode.stage_timeout)
+  OR_OPENCODE_MAX_STEPS        Max agent steps per session (overrides opencode.max_steps)
+  OR_OPENCODE_MIN_VERSION      Minimum opencode version (overrides opencode.min_version)
+  OR_PROVIDER_CONFIG_PATH      Path to provider JSON file (overrides opencode.provider_config_path)
+  OR_PROVIDER_CONFIG           Inline provider JSON config
+  OR_AGENT_PROMPT_PATH         Path to reviewer agent prompt file (overrides pipeline.review_agent_prompt_path)
+  OR_MESSAGE_PATHS             Comma-separated paths to reviewer message files (overrides pipeline.review_message_paths)
+  OR_FINALIZER_PROMPT_PATH     Path to finalizer agent prompt file (overrides pipeline.finalizer_prompt_path)
+  OR_FINALIZER_MESSAGE_PATH    Path to finalizer user message file (overrides pipeline.finalizer_message_path)
+  OR_GITLAB_URL                GitLab instance URL (overrides gitlab.url)
+  OR_GITLAB_TOKEN              GitLab private access token (overrides gitlab.token)
+  OR_GITLAB_PROJECT_ID         Numeric GitLab project ID (overrides gitlab.project_id)
+  OR_GITLAB_CLEAR_COMMENTS     Clear open MR discussions before posting (true/1 to enable)
 
 Debug flags:
   --review-dump FILE    Save final review JSON to FILE after LLM pipeline (for replay with --fast-review).
   --fast-review FILE    Skip LLM pipeline and load review from FILE (fast-path for iterating on VCS publishing).
 
-Priority (branch):            --branch flag > REVIEW_BRANCH env > git.branch TOML.
-Priority (provider):          REVIEW_PROVIDER_CONFIG_PATH > REVIEW_PROVIDER_CONFIG > TOML path.
-Priority (agent prompt):      REVIEW_AGENT_PROMPT_PATH > review_agent_prompt TOML > review_agent_prompt_path TOML > built-in default.
-Priority (messages):          REVIEW_MESSAGE_PATHS > review_messages TOML > review_message_paths TOML > (none).
-Priority (finalizer prompt):  REVIEW_FINALIZER_PROMPT_PATH > finalizer_prompt TOML > finalizer_prompt_path TOML > built-in default.
-Priority (finalizer message): REVIEW_FINALIZER_MESSAGE_PATH > finalizer_message TOML > finalizer_message_path TOML > built-in default.`),
+Priority (branch):            --branch flag > OR_BRANCH env > git.branch TOML.
+Priority (provider):          OR_PROVIDER_CONFIG_PATH > OR_PROVIDER_CONFIG > TOML path.
+Priority (agent prompt):      OR_AGENT_PROMPT_PATH > review_agent_prompt TOML > review_agent_prompt_path TOML > built-in default.
+Priority (messages):          OR_MESSAGE_PATHS > review_messages TOML > review_message_paths TOML > (none).
+Priority (finalizer prompt):  OR_FINALIZER_PROMPT_PATH > finalizer_prompt TOML > finalizer_prompt_path TOML > built-in default.
+Priority (finalizer message): OR_FINALIZER_MESSAGE_PATH > finalizer_message TOML > finalizer_message_path TOML > built-in default.`),
 	)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -132,7 +132,7 @@ Priority (finalizer message): REVIEW_FINALIZER_MESSAGE_PATH > finalizer_message 
 	}
 
 	if cfg.Git.Branch == "" {
-		slog.Error("branch is required: use --branch flag, REVIEW_BRANCH env, or set git.branch in config")
+		slog.Error("branch is required: use --branch flag, OR_BRANCH env, or set git.branch in config")
 		os.Exit(1)
 	}
 
@@ -264,13 +264,13 @@ func run(cfg *config.Config, reviewerWS, finalizerWS *workspace.Workspace, messa
 }
 
 // initSlog configures the global slog logger.
-// Level is read from SLOG_LEVEL env var (e.g. "debug", "info", "warn", "error").
+// Level is read from OR_SLOG_LEVEL env var (e.g. "debug", "info", "warn", "error").
 // Defaults to info if unset or invalid.
 func initSlog() {
 	level := slog.LevelInfo
-	if val := os.Getenv("SLOG_LEVEL"); val != "" {
+	if val := os.Getenv("OR_SLOG_LEVEL"); val != "" {
 		if err := level.UnmarshalText([]byte(val)); err != nil {
-			slog.Warn("invalid SLOG_LEVEL, defaulting to info", "value", val) // #nosec G706 -- env var, not user input
+			slog.Warn("invalid OR_SLOG_LEVEL, defaulting to info", "value", val) // #nosec G706 -- env var, not user input
 		}
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))

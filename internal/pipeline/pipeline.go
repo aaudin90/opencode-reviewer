@@ -159,7 +159,7 @@ func (p *Pipeline) swapAgentsMD() error {
 // Failed sessions are logged but do not stop the pipeline.
 func (p *Pipeline) runAllReviews(ctx context.Context) []*models.ReviewResult {
 	if len(p.messages) == 0 {
-		slog.Error("no messages configured: set pipeline.review_message_paths in config or REVIEW_MESSAGE_PATHS env")
+		slog.Error("no messages configured: set pipeline.review_message_paths in config or OR_MESSAGE_PATHS env")
 		return nil
 	}
 
