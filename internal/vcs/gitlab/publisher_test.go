@@ -261,11 +261,12 @@ func TestPublish_ClearComments(t *testing.T) {
 		{
 			ID:             "d1",
 			IndividualNote: false,
-			Notes:          []discussionNote{{ID: 999, System: false, Resolvable: false, Resolved: false}},
+			Notes:          []discussionNote{{ID: 999, System: false, Resolvable: false, Resolved: false, Author: noteAuthor{ID: 99}}},
 		},
 	}
 
 	mux := http.NewServeMux()
+	registerCurrentUser(mux)
 
 	mux.HandleFunc("GET /api/v4/projects/42/merge_requests", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

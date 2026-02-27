@@ -181,6 +181,13 @@ func TestPostDiffNote_OldLinePayload(t *testing.T) {
 	}
 }
 
+func registerCurrentUser(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/v4/user", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(CurrentUser{ID: 99})
+	})
+}
+
 func TestClearMRComments_DeletesOpenSingle(t *testing.T) {
 	var deleteCount int
 
@@ -188,11 +195,12 @@ func TestClearMRComments_DeletesOpenSingle(t *testing.T) {
 		{
 			ID:             "d1",
 			IndividualNote: true,
-			Notes:          []discussionNote{{ID: 101, System: false, Resolvable: false, Resolved: false}},
+			Notes:          []discussionNote{{ID: 101, System: false, Resolvable: false, Resolved: false, Author: noteAuthor{ID: 99}}},
 		},
 	}
 
 	mux := http.NewServeMux()
+	registerCurrentUser(mux)
 	mux.HandleFunc("GET /api/v4/projects/42/merge_requests/10/discussions", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(discussions)
@@ -222,11 +230,12 @@ func TestClearMRComments_SkipsResolved(t *testing.T) {
 	discussions := []mrDiscussion{
 		{
 			ID:    "d1",
-			Notes: []discussionNote{{ID: 102, System: false, Resolvable: true, Resolved: true}},
+			Notes: []discussionNote{{ID: 102, System: false, Resolvable: true, Resolved: true, Author: noteAuthor{ID: 99}}},
 		},
 	}
 
 	mux := http.NewServeMux()
+	registerCurrentUser(mux)
 	mux.HandleFunc("GET /api/v4/projects/42/merge_requests/10/discussions", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(discussions)
@@ -254,13 +263,14 @@ func TestClearMRComments_SkipsReplied(t *testing.T) {
 		{
 			ID: "d1",
 			Notes: []discussionNote{
-				{ID: 103, System: false, Resolvable: false, Resolved: false},
-				{ID: 104, System: false, Resolvable: false, Resolved: false},
+				{ID: 103, System: false, Resolvable: false, Resolved: false, Author: noteAuthor{ID: 99}},
+				{ID: 104, System: false, Resolvable: false, Resolved: false, Author: noteAuthor{ID: 99}},
 			},
 		},
 	}
 
 	mux := http.NewServeMux()
+	registerCurrentUser(mux)
 	mux.HandleFunc("GET /api/v4/projects/42/merge_requests/10/discussions", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(discussions)
@@ -283,11 +293,12 @@ func TestClearMRComments_SkipsSystem(t *testing.T) {
 	discussions := []mrDiscussion{
 		{
 			ID:    "d1",
-			Notes: []discussionNote{{ID: 105, System: true, Resolvable: false, Resolved: false}},
+			Notes: []discussionNote{{ID: 105, System: true, Resolvable: false, Resolved: false, Author: noteAuthor{ID: 99}}},
 		},
 	}
 
 	mux := http.NewServeMux()
+	registerCurrentUser(mux)
 	mux.HandleFunc("GET /api/v4/projects/42/merge_requests/10/discussions", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(discussions)
@@ -306,6 +317,38 @@ func TestClearMRComments_SkipsSystem(t *testing.T) {
 	}
 }
 
+func TestClearMRComments_SkipsOtherAuthor(t *testing.T) {
+	discussions := []mrDiscussion{
+		{
+			ID:    "d1",
+			Notes: []discussionNote{{ID: 106, System: false, Resolvable: false, Resolved: false, Author: noteAuthor{ID: 55}}},
+		},
+	}
+
+	mux := http.NewServeMux()
+	registerCurrentUser(mux)
+	mux.HandleFunc("GET /api/v4/projects/42/merge_requests/10/discussions", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(discussions)
+	})
+	mux.HandleFunc("DELETE /api/v4/projects/42/merge_requests/10/notes/106", func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("DELETE should not be called for a note by another author")
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	deleted, err := c.ClearMRComments(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("ClearMRComments: %v", err)
+	}
+	if deleted != 0 {
+		t.Errorf("deleted = %d, want 0 (note by another author)", deleted)
+	}
+}
+
 func TestClearMRComments_Pagination(t *testing.T) {
 	var getCount int
 	var deleteCount int
@@ -315,14 +358,15 @@ func TestClearMRComments_Pagination(t *testing.T) {
 	for i := range page1 {
 		page1[i] = mrDiscussion{
 			ID:    fmt.Sprintf("d%d", i),
-			Notes: []discussionNote{{ID: i + 200, System: false, Resolvable: false, Resolved: false}},
+			Notes: []discussionNote{{ID: i + 200, System: false, Resolvable: false, Resolved: false, Author: noteAuthor{ID: 99}}},
 		}
 	}
 	page2 := []mrDiscussion{
-		{ID: "d100", Notes: []discussionNote{{ID: 300, System: false, Resolvable: false, Resolved: false}}},
+		{ID: "d100", Notes: []discussionNote{{ID: 300, System: false, Resolvable: false, Resolved: false, Author: noteAuthor{ID: 99}}}},
 	}
 
 	mux := http.NewServeMux()
+	registerCurrentUser(mux)
 	mux.HandleFunc("GET /api/v4/projects/42/merge_requests/10/discussions", func(w http.ResponseWriter, r *http.Request) {
 		getCount++
 		w.Header().Set("Content-Type", "application/json")
