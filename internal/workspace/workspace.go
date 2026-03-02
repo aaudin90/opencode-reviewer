@@ -81,12 +81,20 @@ func newWorkspace(cfg Config, agentName, toolFileName string, toolContent []byte
 		}
 	}
 
+	for _, sa := range cfg.SubAgents {
+		if err := writeSubAgentFile(dir, sa.Name, sa.Prompt); err != nil {
+			_ = os.RemoveAll(dir)
+			return nil, fmt.Errorf("write sub-agent %q: %w", sa.Name, err)
+		}
+	}
+
 	slog.Debug("workspace created",
 		"dir", dir,
 		"config_path", configPath,
 		"config_content", string(configData),
 		"has_prompt", prompt != "",
 		"has_provider_json", len(cfg.ProviderJSON) > 0,
+		"sub_agents", len(cfg.SubAgents),
 	)
 
 	return &Workspace{dir: dir}, nil

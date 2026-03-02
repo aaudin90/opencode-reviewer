@@ -14,6 +14,7 @@ internal/pipeline/           → Review pipeline orchestration
 internal/agentsmd/           → AGENTS.md & CLAUDE.md swap (empty for review)
 internal/agentconfig/        → Agent prompt loading (env / TOML path / file)
 internal/providerconfig/     → Provider JSON loading (env / TOML path / file)
+internal/subagentconfig/     → Sub-agent prompt loading
 internal/workspace/          → Temporary workspace for opencode config
 internal/vcs/                → VCS publisher interface, line normalizer, Markdown formatting
 internal/vcs/gitlab/         → GitLab MR comments publisher (REST API client)
@@ -49,6 +50,10 @@ TOML config file (`configs/example.toml`) with sections:
 | `[pipeline]` | `finalizer_prompt`         | Inline finalizer agent prompt (alternative to path)      |
 | `[pipeline]` | `finalizer_message_path`   | Path to finalizer user message file (relative to TOML)   |
 | `[pipeline]` | `finalizer_message`        | Inline finalizer user message (alternative to path)      |
+| `[pipeline]` | `review_sub_agent_prompt_paths`    | Paths to reviewer sub-agent prompt files (relative to TOML)     |
+| `[pipeline]` | `review_sub_agent_prompts`         | Inline reviewer sub-agent prompts (alternative to paths)        |
+| `[pipeline]` | `finalizer_sub_agent_prompt_paths` | Paths to finalizer sub-agent prompt files (relative to TOML)    |
+| `[pipeline]` | `finalizer_sub_agent_prompts`      | Inline finalizer sub-agent prompts (alternative to paths)       |
 | `[gitlab]`   | `url`                      | GitLab instance URL (e.g. https://gitlab.example.com)    |
 | `[gitlab]`   | `token`                    | GitLab private access token                              |
 | `[gitlab]`   | `project_id`               | Numeric GitLab project ID                                |
@@ -76,6 +81,8 @@ Config file is optional — all parameters can be set via environment variables.
 | `OR_MESSAGE_PATHS`                | Comma-separated paths to reviewer message files (overrides `pipeline.review_message_paths`) |
 | `OR_FINALIZER_PROMPT_PATH`        | Path to finalizer agent prompt file (overrides `pipeline.finalizer_prompt_path`) |
 | `OR_FINALIZER_MESSAGE_PATH`       | Path to finalizer user message file (overrides `pipeline.finalizer_message_path`) |
+| `OR_REVIEW_SUB_AGENT_PROMPT_PATHS`    | Comma-separated paths to reviewer sub-agent prompt files (overrides `pipeline.review_sub_agent_prompt_paths`) |
+| `OR_FINALIZER_SUB_AGENT_PROMPT_PATHS` | Comma-separated paths to finalizer sub-agent prompt files (overrides `pipeline.finalizer_sub_agent_prompt_paths`) |
 | `OR_GITLAB_URL`                   | GitLab instance URL (overrides `gitlab.url`)                             |
 | `OR_GITLAB_TOKEN`                 | GitLab private access token (overrides `gitlab.token`)                   |
 | `OR_GITLAB_PROJECT_ID`            | Numeric GitLab project ID (overrides `gitlab.project_id`)                |
@@ -90,6 +97,8 @@ Config file is optional — all parameters can be set via environment variables.
 - **Messages**: `OR_MESSAGE_PATHS` env > `review_messages` TOML > `review_message_paths` TOML > (none)
 - **Finalizer prompt**: `OR_FINALIZER_PROMPT_PATH` env > `finalizer_prompt` TOML > `finalizer_prompt_path` TOML > built-in default
 - **Finalizer message**: `OR_FINALIZER_MESSAGE_PATH` env > `finalizer_message` TOML > `finalizer_message_path` TOML > built-in default
+- **Reviewer sub-agents**: `OR_REVIEW_SUB_AGENT_PROMPT_PATHS` > `review_sub_agent_prompts` TOML > `review_sub_agent_prompt_paths` TOML > (none)
+- **Finalizer sub-agents**: `OR_FINALIZER_SUB_AGENT_PROMPT_PATHS` > `finalizer_sub_agent_prompts` TOML > `finalizer_sub_agent_prompt_paths` TOML > (none)
 - **All other ENV vars**: override TOML value if set
 
 ## Commit Format

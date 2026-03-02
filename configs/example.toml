@@ -22,6 +22,8 @@
 #   OR_MESSAGE_PATHS             Comma-separated paths to reviewer message files
 #   OR_FINALIZER_PROMPT_PATH     Path to finalizer agent prompt file
 #   OR_FINALIZER_MESSAGE_PATH    Path to finalizer user message file
+#   OR_REVIEW_SUB_AGENT_PROMPT_PATHS     Comma-separated paths to reviewer sub-agent prompt files
+#   OR_FINALIZER_SUB_AGENT_PROMPT_PATHS  Comma-separated paths to finalizer sub-agent prompt files
 #   OR_GITLAB_URL                GitLab instance URL
 #   OR_GITLAB_TOKEN              GitLab private access token
 #   OR_GITLAB_PROJECT_ID         Numeric GitLab project ID
@@ -33,6 +35,8 @@
 # Priority (messages):          OR_MESSAGE_PATHS > review_messages TOML > review_message_paths TOML > (none).
 # Priority (finalizer prompt):  OR_FINALIZER_PROMPT_PATH > finalizer_prompt TOML > finalizer_prompt_path TOML > built-in default.
 # Priority (finalizer message): OR_FINALIZER_MESSAGE_PATH > finalizer_message TOML > finalizer_message_path TOML > built-in default.
+# Priority (reviewer sub-agents):  OR_REVIEW_SUB_AGENT_PROMPT_PATHS > review_sub_agent_prompts TOML > review_sub_agent_prompt_paths TOML > (none).
+# Priority (finalizer sub-agents): OR_FINALIZER_SUB_AGENT_PROMPT_PATHS > finalizer_sub_agent_prompts TOML > finalizer_sub_agent_prompt_paths TOML > (none).
 
 # project_dir: absolute path to the project repository to review.
 # Used as working directory for git, opencode serve, and output.
@@ -123,6 +127,28 @@ project_dir = "/path/to/your/project"
   # finalizer_message: inline finalizer user message (alternative to path).
   # If set, finalizer_message_path is ignored (but env path still takes priority).
   # finalizer_message = "Merge and deduplicate the following findings..."
+
+  # review_sub_agent_prompt_paths: paths to reviewer sub-agent prompt files (relative to this file or absolute).
+  # Sub-agents run in "subagent" mode and cannot call submit_review or submit_final_review.
+  # Env: OR_REVIEW_SUB_AGENT_PROMPT_PATHS (comma-separated paths).
+  # review_sub_agent_prompt_paths = [
+  #   "../prompt-examples/sub-agents/reviewer-verifier.md",
+  # ]
+
+  # review_sub_agent_prompts: inline reviewer sub-agent prompts (alternative to paths).
+  # If set, review_sub_agent_prompt_paths is ignored (but env paths still take priority).
+  # review_sub_agent_prompts = ["You are a verification sub-agent..."]
+
+  # finalizer_sub_agent_prompt_paths: paths to finalizer sub-agent prompt files (relative to this file or absolute).
+  # Sub-agents run in "subagent" mode and cannot call submit_review or submit_final_review.
+  # Env: OR_FINALIZER_SUB_AGENT_PROMPT_PATHS (comma-separated paths).
+  # finalizer_sub_agent_prompt_paths = [
+  #   "../prompt-examples/sub-agents/finalizer-verifier.md",
+  # ]
+
+  # finalizer_sub_agent_prompts: inline finalizer sub-agent prompts (alternative to paths).
+  # If set, finalizer_sub_agent_prompt_paths is ignored (but env paths still take priority).
+  # finalizer_sub_agent_prompts = ["You are a verification sub-agent..."]
 
 # [gitlab]
 #   # url: GitLab instance URL.
