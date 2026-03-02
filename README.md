@@ -93,6 +93,10 @@ project_dir = "/path/to/your/project"
   # finalizer_prompt       = "..."          # inline alternative
   # finalizer_message_path = "finalizer-message.md"
   # finalizer_message      = "..."          # inline alternative
+  # review_sub_agent_prompt_paths = ["../prompt-examples/sub-agents/reviewer-verifier.md"]
+  # review_sub_agent_prompts     = ["..."]  # inline alternative
+  # finalizer_sub_agent_prompt_paths = ["../prompt-examples/sub-agents/finalizer-verifier.md"]
+  # finalizer_sub_agent_prompts  = ["..."]  # inline alternative
 
 # [gitlab]
 #   url        = "https://gitlab.example.com"
@@ -145,6 +149,10 @@ Arbitrary key-value pairs set as environment variables. Values override TOML con
 | `finalizer_prompt` | — | Inline finalizer agent prompt text. If set, `finalizer_prompt_path` is ignored (but env path still takes priority). |
 | `finalizer_message_path` | — | Path to the finalizer user message file. Relative to the TOML file, or absolute. If not set, the built-in default message is used. |
 | `finalizer_message` | — | Inline finalizer user message text. If set, `finalizer_message_path` is ignored (but env path still takes priority). |
+| `review_sub_agent_prompt_paths` | — | List of reviewer sub-agent prompt files. Each creates a sub-agent with `mode: subagent` that cannot call terminal tools. Relative to the TOML file, or absolute. |
+| `review_sub_agent_prompts` | — | Inline reviewer sub-agent prompts (alternative to `review_sub_agent_prompt_paths`). If set, the paths field is ignored (but env paths still take priority). |
+| `finalizer_sub_agent_prompt_paths` | — | List of finalizer sub-agent prompt files. Each creates a sub-agent with `mode: subagent` that cannot call terminal tools. Relative to the TOML file, or absolute. |
+| `finalizer_sub_agent_prompts` | — | Inline finalizer sub-agent prompts (alternative to `finalizer_sub_agent_prompt_paths`). If set, the paths field is ignored (but env paths still take priority). |
 
 #### `[gitlab]`
 
@@ -178,6 +186,8 @@ All environment variables override their TOML counterparts when set.
 | `OR_MESSAGE_PATHS` | `pipeline.review_message_paths` | Comma-separated paths to reviewer message files. Relative to CWD. |
 | `OR_FINALIZER_PROMPT_PATH` | `pipeline.finalizer_prompt_path` | Path to finalizer agent prompt file. |
 | `OR_FINALIZER_MESSAGE_PATH` | `pipeline.finalizer_message_path` | Path to finalizer user message file. |
+| `OR_REVIEW_SUB_AGENT_PROMPT_PATHS` | `pipeline.review_sub_agent_prompt_paths` | Comma-separated paths to reviewer sub-agent prompt files. Relative to CWD. |
+| `OR_FINALIZER_SUB_AGENT_PROMPT_PATHS` | `pipeline.finalizer_sub_agent_prompt_paths` | Comma-separated paths to finalizer sub-agent prompt files. Relative to CWD. |
 | `OR_GITLAB_URL` | `gitlab.url` | GitLab instance URL. |
 | `OR_GITLAB_TOKEN` | `gitlab.token` | GitLab private access token. |
 | `OR_GITLAB_PROJECT_ID` | `gitlab.project_id` | Numeric GitLab project ID. |
@@ -239,6 +249,24 @@ OR_FINALIZER_MESSAGE_PATH (reads file)
   > built-in default finalizer message
 ```
 
+#### Reviewer sub-agents (Phase 1 sub-agents)
+
+```
+OR_REVIEW_SUB_AGENT_PROMPT_PATHS (comma-separated, relative to CWD, reads files)
+  > review_sub_agent_prompts TOML (inline list)
+  > review_sub_agent_prompt_paths TOML (relative to TOML file, reads files)
+  > none (no sub-agents)
+```
+
+#### Finalizer sub-agents (Phase 2 sub-agents)
+
+```
+OR_FINALIZER_SUB_AGENT_PROMPT_PATHS (comma-separated, relative to CWD, reads files)
+  > finalizer_sub_agent_prompts TOML (inline list)
+  > finalizer_sub_agent_prompt_paths TOML (relative to TOML file, reads files)
+  > none (no sub-agents)
+```
+
 #### All other parameters
 
 ```
@@ -288,6 +316,14 @@ The finalizer message is sent to the finalizer agent along with the Phase 1 resu
 - Configure via `pipeline.finalizer_message_path` (file) or `pipeline.finalizer_message` (inline) in TOML, or `OR_FINALIZER_MESSAGE_PATH` env (file path).
 - If not configured, the built-in default message (`internal/finalizerconfig/default-message.md`) is used.
 
+### Sub-Agents (Optional)
+
+Sub-agents are auxiliary agents that the main reviewer or finalizer can delegate tasks to via OpenCode's Task tool. They run in `mode: subagent` and are restricted from calling terminal tools (`submit_review`, `submit_final_review`), preventing them from ending the session prematurely.
+
+- Configure via `pipeline.review_sub_agent_prompt_paths` (file paths) or `pipeline.review_sub_agent_prompts` (inline) in TOML, or `OR_REVIEW_SUB_AGENT_PROMPT_PATHS` env (comma-separated paths).
+- Similarly for finalizer sub-agents via `finalizer_sub_agent_prompt_paths` / `finalizer_sub_agent_prompts` / `OR_FINALIZER_SUB_AGENT_PROMPT_PATHS`.
+- Example sub-agent prompts are available in `prompt-examples/sub-agents/`.
+
 ## Development
 
 ```bash
@@ -320,6 +356,7 @@ internal/agentconfig/        Agent system prompt loading (Phase 1)
 internal/finalizerconfig/    Finalizer agent prompt and message loading (Phase 2)
 internal/providerconfig/     Provider JSON loading and validation
 internal/promptconfig/       Reviewer message loading
+internal/subagentconfig/     Sub-agent prompt loading
 internal/envconfig/          Shared ENV-or-file resolution logic
 internal/agentsmd/           AGENTS.md / CLAUDE.md swap for review workspace
 internal/workspace/          Temporary OpenCode workspace setup

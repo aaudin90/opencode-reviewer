@@ -17,6 +17,7 @@ import (
 	"github.com/aaudin90/opencode-reviewer/internal/promptconfig"
 	"github.com/aaudin90/opencode-reviewer/internal/providerconfig"
 	"github.com/aaudin90/opencode-reviewer/internal/runner"
+	"github.com/aaudin90/opencode-reviewer/internal/subagentconfig"
 	"github.com/aaudin90/opencode-reviewer/internal/vcs"
 	gitlabvcs "github.com/aaudin90/opencode-reviewer/internal/vcs/gitlab"
 	"github.com/aaudin90/opencode-reviewer/internal/workspace"
@@ -71,6 +72,10 @@ Config file (TOML) sections:
     finalizer_prompt          Inline finalizer agent prompt (alternative to path)
     finalizer_message_path    Path to finalizer user message file (relative to config file or absolute)
     finalizer_message         Inline finalizer user message (alternative to path)
+    review_sub_agent_prompt_paths  Paths to reviewer sub-agent prompt files (relative or absolute)
+    review_sub_agent_prompts       Inline reviewer sub-agent prompts (alternative to paths)
+    finalizer_sub_agent_prompt_paths  Paths to finalizer sub-agent prompt files (relative or absolute)
+    finalizer_sub_agent_prompts    Inline finalizer sub-agent prompts (alternative to paths)
 
   [gitlab]
     url                       GitLab instance URL (e.g. https://gitlab.example.com)
@@ -96,6 +101,8 @@ Environment variables (override TOML values):
   OR_MESSAGE_PATHS             Comma-separated paths to reviewer message files (overrides pipeline.review_message_paths)
   OR_FINALIZER_PROMPT_PATH     Path to finalizer agent prompt file (overrides pipeline.finalizer_prompt_path)
   OR_FINALIZER_MESSAGE_PATH    Path to finalizer user message file (overrides pipeline.finalizer_message_path)
+  OR_REVIEW_SUB_AGENT_PROMPT_PATHS     Comma-separated paths to reviewer sub-agent prompt files
+  OR_FINALIZER_SUB_AGENT_PROMPT_PATHS  Comma-separated paths to finalizer sub-agent prompt files
   OR_GITLAB_URL                GitLab instance URL (overrides gitlab.url)
   OR_GITLAB_TOKEN              GitLab private access token (overrides gitlab.token)
   OR_GITLAB_PROJECT_ID         Numeric GitLab project ID (overrides gitlab.project_id)
@@ -111,7 +118,9 @@ Priority (provider):          OR_PROVIDER_CONFIG_PATH > OR_PROVIDER_CONFIG > TOM
 Priority (agent prompt):      OR_AGENT_PROMPT_PATH > review_agent_prompt TOML > review_agent_prompt_path TOML > built-in default.
 Priority (messages):          OR_MESSAGE_PATHS > review_messages TOML > review_message_paths TOML > (none).
 Priority (finalizer prompt):  OR_FINALIZER_PROMPT_PATH > finalizer_prompt TOML > finalizer_prompt_path TOML > built-in default.
-Priority (finalizer message): OR_FINALIZER_MESSAGE_PATH > finalizer_message TOML > finalizer_message_path TOML > built-in default.`),
+Priority (finalizer message): OR_FINALIZER_MESSAGE_PATH > finalizer_message TOML > finalizer_message_path TOML > built-in default.
+Priority (reviewer sub-agents):  OR_REVIEW_SUB_AGENT_PROMPT_PATHS > review_sub_agent_prompts TOML > review_sub_agent_prompt_paths TOML > (none).
+Priority (finalizer sub-agents): OR_FINALIZER_SUB_AGENT_PROMPT_PATHS > finalizer_sub_agent_prompts TOML > finalizer_sub_agent_prompt_paths TOML > (none).`),
 	)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -174,6 +183,17 @@ Priority (finalizer message): OR_FINALIZER_MESSAGE_PATH > finalizer_message TOML
 		os.Exit(1)
 	}
 
+	reviewSubAgents, err := subagentconfig.Load(
+		"OR_REVIEW_SUB_AGENT_PROMPT_PATHS", "reviewer",
+		configDir,
+		cfg.Pipeline.ReviewSubAgentPromptPaths,
+		cfg.Pipeline.ReviewSubAgentPrompts,
+	)
+	if err != nil {
+		slog.Error("failed to load reviewer sub-agent prompts", "error", err)
+		os.Exit(1)
+	}
+
 	finalizerMsgPath := resolveRelativePath(configDir, cfg.Pipeline.FinalizerMessagePath)
 	finalizerMessage, err := finalizerconfig.LoadMessage(finalizerMsgPath, cfg.Pipeline.FinalizerMessage)
 	if err != nil {
@@ -181,10 +201,22 @@ Priority (finalizer message): OR_FINALIZER_MESSAGE_PATH > finalizer_message TOML
 		os.Exit(1)
 	}
 
+	finalizerSubAgents, err := subagentconfig.Load(
+		"OR_FINALIZER_SUB_AGENT_PROMPT_PATHS", "finalizer",
+		configDir,
+		cfg.Pipeline.FinalizerSubAgentPromptPaths,
+		cfg.Pipeline.FinalizerSubAgentPrompts,
+	)
+	if err != nil {
+		slog.Error("failed to load finalizer sub-agent prompts", "error", err)
+		os.Exit(1)
+	}
+
 	reviewerWS, err := workspace.NewReviewer(workspace.Config{
 		ProviderJSON: providerJSON,
 		Model:        cfg.OpenCode.Model,
 		MaxSteps:     cfg.OpenCode.MaxSteps,
+		SubAgents:    reviewSubAgents,
 	}, agentPrompt)
 	if err != nil {
 		slog.Error("failed to create reviewer workspace", "error", err)
@@ -196,6 +228,7 @@ Priority (finalizer message): OR_FINALIZER_MESSAGE_PATH > finalizer_message TOML
 		ProviderJSON: providerJSON,
 		Model:        cfg.OpenCode.Model,
 		MaxSteps:     cfg.OpenCode.MaxSteps,
+		SubAgents:    finalizerSubAgents,
 	}, finalizerPrompt)
 	if err != nil {
 		slog.Error("failed to create finalizer workspace", "error", err)
