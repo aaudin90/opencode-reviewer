@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -169,6 +170,8 @@ func (r *Runner) run(ctx context.Context, req RunRequest, out chan<- RunEvent) {
 	slog.Info("session created", "id", sessionID, "prompt", req.PromptPath)
 
 	sseClient := sse.New(r.httpClient, r.baseURL)
+	childSessions := &sync.Map{}
+	go r.pollChildren(ctx, sessionID, childSessions)
 
 	for attempt := range maxToolCallRetries {
 		attemptCtx, attemptCancel := context.WithCancel(ctx)
@@ -183,7 +186,7 @@ func (r *Runner) run(ctx context.Context, req RunRequest, out chan<- RunEvent) {
 		events := make(chan sse.ToolCall, 256)
 		sseCh := make(chan sseResult, 1)
 		go func() {
-			data, sseErr := sseClient.WaitForToolResult(attemptCtx, sessionID, req.ToolName, events)
+			data, sseErr := sseClient.WaitForToolResult(attemptCtx, sessionID, req.ToolName, childSessions, events)
 			sseCh <- sseResult{data, sseErr}
 		}()
 
@@ -192,7 +195,7 @@ func (r *Runner) run(ctx context.Context, req RunRequest, out chan<- RunEvent) {
 		go func() {
 			defer close(tcDone)
 			for tc := range events {
-				slog.Info("tool call", "tool", tc.Tool, "session", sessionID, "args", string(tc.Input))
+				slog.Info("tool call", "tool", tc.Tool, "session", tc.SessionID, "args", string(tc.Input))
 				out <- RunEvent{ToolCall: &tc}
 			}
 		}()
@@ -477,6 +480,59 @@ func (r *Runner) getSessionStats(sessionID string) (cost float64, tokens tokenUs
 		tokens.Cache.Write += t.Cache.Write
 	}
 	return cost, tokens, nil
+}
+
+func (r *Runner) getChildSessions(ctx context.Context, sessionID string) ([]string, error) {
+	url := fmt.Sprintf("%s/session/%s/children", r.baseURL, sessionID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := r.httpClient.Do(req) // #nosec G704 -- URL from trusted config
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, body)
+	}
+
+	var sessions []sessionResponse
+	if err := json.NewDecoder(resp.Body).Decode(&sessions); err != nil {
+		return nil, fmt.Errorf("decode children response: %w", err)
+	}
+
+	ids := make([]string, len(sessions))
+	for i, s := range sessions {
+		ids[i] = s.ID
+	}
+	return ids, nil
+}
+
+func (r *Runner) pollChildren(ctx context.Context, sessionID string, childSessions *sync.Map) {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			ids, err := r.getChildSessions(ctx, sessionID)
+			if err != nil {
+				slog.Debug("failed to poll child sessions", "session", sessionID, "error", err)
+				continue
+			}
+			for _, id := range ids {
+				if _, loaded := childSessions.LoadOrStore(id, true); !loaded {
+					slog.Info("discovered child session via polling", "child_session_id", id, "parent_session_id", sessionID)
+				}
+			}
+		}
+	}
 }
 
 func (r *Runner) extractText(parts []messagePart) string {

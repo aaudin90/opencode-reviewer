@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 )
 
 // Client reads SSE events from an opencode serve endpoint.
@@ -29,7 +31,7 @@ func New(httpClient *http.Client, baseURL string) *Client {
 // Returns the raw JSON input of the tool call.
 // events receives all completed tool call events as they arrive; it is closed
 // before WaitForToolResult returns. Pass nil to disable event forwarding.
-func (c *Client) WaitForToolResult(ctx context.Context, sessionID, toolName string, events chan<- ToolCall) (json.RawMessage, error) {
+func (c *Client) WaitForToolResult(ctx context.Context, sessionID, toolName string, childSessions *sync.Map, events chan<- ToolCall) (json.RawMessage, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build sse request: %w", err)
@@ -42,7 +44,7 @@ func (c *Client) WaitForToolResult(ctx context.Context, sessionID, toolName stri
 	}
 	defer resp.Body.Close()
 
-	return parseStream(resp.Body, sessionID, toolName, events)
+	return parseStream(resp.Body, sessionID, toolName, childSessions, events)
 }
 
 // parseStream reads SSE events from r and returns the input of the first
@@ -51,11 +53,14 @@ func (c *Client) WaitForToolResult(ctx context.Context, sessionID, toolName stri
 func parseStream(
 	r io.Reader,
 	sessionID, toolName string,
+	childSessions *sync.Map,
 	events chan<- ToolCall,
 ) (json.RawMessage, error) {
 	if events != nil {
 		defer close(events)
 	}
+
+	knownSessions := map[string]bool{sessionID: true}
 
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 1<<20), 1<<20) // 1 MB buffer for large findings
@@ -74,7 +79,17 @@ func parseStream(
 				raw := []byte(strings.Join(dataLines, ""))
 				var event toolCallEvent
 				if err := json.Unmarshal(raw, &event); err == nil {
-					trySendToolCall(&event, sessionID, events)
+					if sid := event.Properties.Part.SessionID; sid != "" && !knownSessions[sid] {
+						if childSessions != nil {
+							if _, ok := childSessions.Load(sid); ok {
+								knownSessions[sid] = true
+								slog.Info("discovered child session in SSE stream",
+									"child_session_id", sid,
+									"parent_session_id", sessionID)
+							}
+						}
+					}
+					trySendToolCall(&event, knownSessions, events)
 					if args, ok := extractToolArgs(&event, sessionID, toolName); ok {
 						return args, nil
 					}
@@ -92,13 +107,13 @@ func parseStream(
 }
 
 // trySendToolCall sends a completed tool call event to the channel (non-blocking).
-// Only events matching the given sessionID are forwarded.
-func trySendToolCall(event *toolCallEvent, sessionID string, events chan<- ToolCall) {
+// Only events matching a known session ID are forwarded.
+func trySendToolCall(event *toolCallEvent, knownSessions map[string]bool, events chan<- ToolCall) {
 	if events == nil {
 		return
 	}
 	part := event.Properties.Part
-	if part.Type == "tool" && part.State.Status == "completed" && part.SessionID == sessionID {
+	if part.Type == "tool" && part.State.Status == "completed" && knownSessions[part.SessionID] {
 		select {
 		case events <- ToolCall{Tool: part.Tool, SessionID: part.SessionID, Input: part.State.Input}:
 		default:
