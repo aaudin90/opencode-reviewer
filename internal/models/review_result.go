@@ -7,6 +7,6 @@ type ReviewResult struct {
 	Findings     []Finding
 	ParseErr     error
 	Summary      string // from submit_review tool args
-	Verdict      string // "approve" | "request_changes" | "comment_only"
+	Verdict      string // "approve" | "request_changes" | "comment_only" | "skipped"
 	ReviewerName string // short label inferred by agent from user prompt
 }

@@ -14,6 +14,12 @@ type submitFinalReviewArgs struct {
 	Findings []models.FinalFinding `json:"findings"`
 }
 
+var validFinalVerdicts = map[string]bool{
+	"approve":         true,
+	"request_changes": true,
+	"comment_only":    true,
+}
+
 // ParseFinal converts the raw JSON fallback response into a FinalReview.
 // It attempts to unmarshal as a full submitFinalReviewArgs object. If the JSON
 // is valid and contains at least a verdict and findings, the structured fields
@@ -30,7 +36,7 @@ func ParseFinal(raw string) *models.FinalReview {
 				Verdict:  args.Verdict,
 				Findings: args.Findings,
 			}
-			if !validVerdicts[args.Verdict] {
+			if !validFinalVerdicts[args.Verdict] {
 				result.ParseErr = fmt.Errorf("invalid verdict %q", args.Verdict)
 			}
 			return result
@@ -57,7 +63,7 @@ func ParseFinalToolArgs(data json.RawMessage) *models.FinalReview {
 	result.Verdict = args.Verdict
 	result.Findings = args.Findings
 
-	if !validVerdicts[args.Verdict] {
+	if !validFinalVerdicts[args.Verdict] {
 		result.ParseErr = fmt.Errorf("invalid verdict %q: must be one of approve, request_changes, comment_only", args.Verdict)
 	}
 	return result

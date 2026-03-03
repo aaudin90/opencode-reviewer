@@ -19,6 +19,7 @@ var validVerdicts = map[string]bool{
 	"approve":         true,
 	"request_changes": true,
 	"comment_only":    true,
+	"skipped":         true,
 }
 
 // ParseToolArgs parses the raw JSON args from the submit_review tool invocation
@@ -37,7 +38,7 @@ func ParseToolArgs(data json.RawMessage) *models.ReviewResult {
 	result.Findings = args.Findings
 
 	if !validVerdicts[args.Verdict] {
-		result.ParseErr = fmt.Errorf("invalid verdict %q: must be one of approve, request_changes, comment_only", args.Verdict)
+		result.ParseErr = fmt.Errorf("invalid verdict %q: must be one of approve, request_changes, comment_only, skipped", args.Verdict)
 	}
 	return result
 }

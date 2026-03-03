@@ -119,6 +119,8 @@ func mapVerdict(v string) (label, emoji string) {
 		return "Changes Requested", "\U0001f534"
 	case "comment_only":
 		return "Comments Only", "\U0001f4ac"
+	case "skipped":
+		return "Skipped", "\u23ed\ufe0f"
 	default:
 		return "", ""
 	}

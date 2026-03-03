@@ -116,3 +116,17 @@ func TestFormatFindingNote_EmptyRecommendation(t *testing.T) {
 		t.Error("should not contain recommendation section when empty")
 	}
 }
+
+func TestFormatReviewNote_Skipped(t *testing.T) {
+	rev := &models.FinalReview{
+		Verdict: "skipped",
+		Summary: "Outside scope.",
+	}
+	got := FormatReviewNote(rev)
+	if !strings.Contains(got, "\u23ed\ufe0f") {
+		t.Error("expected ⏭️ emoji for skipped")
+	}
+	if !strings.Contains(got, "Skipped") {
+		t.Error("expected 'Skipped' label")
+	}
+}

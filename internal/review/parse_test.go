@@ -272,3 +272,29 @@ func TestParseToolArgs_RawEmpty(t *testing.T) {
 		t.Errorf("Raw = %q, want empty (Raw is only set for text fallback)", result.Raw)
 	}
 }
+
+func TestParseToolArgs_SkippedVerdict(t *testing.T) {
+	input := json.RawMessage(`{"summary": "Out of scope", "verdict": "skipped", "findings": []}`)
+
+	result := ParseToolArgs(input)
+
+	if result.ParseErr != nil {
+		t.Fatalf("ParseErr = %v, want nil for skipped verdict", result.ParseErr)
+	}
+	if result.Verdict != "skipped" {
+		t.Errorf("Verdict = %q, want %q", result.Verdict, "skipped")
+	}
+}
+
+func TestParse_SkippedVerdict(t *testing.T) {
+	raw := `{"reviewer_name":"security","summary":"Not in scope","verdict":"skipped","findings":[{"file":"main.go","start_line":1,"end_line":1,"existing_code":"x","confidence":"high","issue_content":"bad","recommendation":"fix"}]}`
+
+	result := Parse(raw)
+
+	if result.ParseErr != nil {
+		t.Fatalf("ParseErr = %v, want nil for skipped verdict", result.ParseErr)
+	}
+	if result.Verdict != "skipped" {
+		t.Errorf("Verdict = %q, want %q", result.Verdict, "skipped")
+	}
+}

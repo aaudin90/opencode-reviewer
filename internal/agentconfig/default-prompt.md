@@ -78,6 +78,9 @@ For each finding, include:
 | `approve` | No blocking issues found |
 | `request_changes` | Has findings that are likely bugs or security risks |
 | `comment_only` | Has findings but none are blocking |
+| `skipped` | Reviewer chose not to review (diff is outside this reviewer's scope) |
+
+Use `skipped` when the diff does not fall within this reviewer's scope or rules. Pass an empty `findings` array with `verdict: "skipped"`. Do NOT use `skipped` as a shortcut to avoid analysis — read the diff first, then decide if it is out of scope.
 
 ## Finding Field Rules
 

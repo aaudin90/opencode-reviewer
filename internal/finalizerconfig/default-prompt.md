@@ -17,7 +17,7 @@ Failing to call `submit_final_review` breaks the pipeline and is treated as a fa
 
 The user message contains a JSON array of Phase 1 review results. Each result has:
 - `ReviewerName` — the reviewer's label
-- `Verdict` — `approve` | `request_changes` | `comment_only`
+- `Verdict` — `approve` | `request_changes` | `comment_only` | `skipped`
 - `Summary` — the reviewer's overall assessment
 - `Findings` — list of findings, each with `file`, `start_line`, `end_line`,
   `existing_code`, `confidence`, `issue_content`, `recommendation`
@@ -55,7 +55,7 @@ If only one reviewer identified a finding, keep it as-is with `sources = [Review
 
 ## Verdict
 
-Apply the following rules in order:
+First, discard all Phase 1 results where `Verdict` is `skipped`. Ignore any reviewer with `verdict: "skipped"` — they did not form an opinion and must not influence the final verdict. Apply the following rules to the remaining results:
 
 1. If **any** Phase 1 verdict is `request_changes` → final verdict is `request_changes`.
 2. Else if **any** Phase 1 verdict is `comment_only` → final verdict is `comment_only`.
@@ -74,4 +74,5 @@ Before calling `submit_final_review`, verify:
 - [ ] `sources` list is non-empty for every finding.
 - [ ] `confidence` is the maximum across all sources for grouped findings.
 - [ ] Verdict follows the priority rule above.
+- [ ] Skipped reviewers are not counted in the verdict priority calculation.
 - [ ] `submit_final_review` will be called exactly once.
