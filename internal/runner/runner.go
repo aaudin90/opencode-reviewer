@@ -39,6 +39,7 @@ const (
 	// This timeout only covers potential network delay in SSE delivery.
 	// If it expires, the attempt is treated as a miss and triggers a retry.
 	toolCallWaitTimeout = 3 * time.Second
+	precheckTimeout     = 3 * time.Minute
 )
 
 // Runner manages an opencode serve subprocess and HTTP interaction.
@@ -200,6 +201,7 @@ func (r *Runner) run(ctx context.Context, req RunRequest, out chan<- RunEvent) {
 			}
 		}()
 
+		slog.Info("sending message to session", "session", sessionID, "attempt", attempt)
 		resp, err := r.sendMessage(ctx, sessionID, RunRequest{Prompt: prompt, AgentName: req.AgentName})
 		if err != nil {
 			attemptCancel()
@@ -217,6 +219,7 @@ func (r *Runner) run(ctx context.Context, req RunRequest, out chan<- RunEvent) {
 
 		// After sendMessage completes, the tool call event should already be buffered.
 		// Wait toolCallWaitTimeout — if the agent called the tool the goroutine returns immediately.
+		slog.Info("waiting for tool call result", "session", sessionID, "tool", req.ToolName)
 		select {
 		case res := <-sseCh:
 			attemptCancel()
@@ -285,6 +288,34 @@ func (r *Runner) run(ctx context.Context, req RunRequest, out chan<- RunEvent) {
 	out <- RunEvent{Final: &RunResult{FallbackText: fallbackText}}
 }
 
+// Precheck creates a throwaway session, sends "ping" and verifies
+// that the server responds with text. It is intended to be called
+// right after StartServe to fail fast before real review sessions.
+func (r *Runner) Precheck(ctx context.Context) error {
+	slog.Info("running precheck")
+
+	ctx, cancel := context.WithTimeout(ctx, precheckTimeout)
+	defer cancel()
+
+	sessionID, err := r.createSession(ctx)
+	if err != nil {
+		return fmt.Errorf("create session: %w", err)
+	}
+	defer r.cleanupSession(sessionID)
+
+	resp, err := r.sendMessage(ctx, sessionID, RunRequest{Prompt: "ping"})
+	if err != nil {
+		return fmt.Errorf("send message: %w", err)
+	}
+
+	text := r.extractText(resp.Parts)
+	if text == "" {
+		return fmt.Errorf("empty response")
+	}
+	slog.Info("precheck succeeded", "response", text)
+	return nil
+}
+
 // StopServe gracefully stops the opencode serve subprocess.
 func (r *Runner) StopServe() {
 	if r.proc == nil || r.proc.Process == nil {
@@ -343,6 +374,7 @@ func (r *Runner) checkHealth(ctx context.Context) bool {
 }
 
 func (r *Runner) createSession(ctx context.Context) (string, error) {
+	slog.Info("creating session")
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.baseURL+"/session", nil)
 	if err != nil {
 		return "", err

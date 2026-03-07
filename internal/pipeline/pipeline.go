@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
+	"path/filepath"
 
 	"github.com/aaudin90/opencode-reviewer/internal/agentsmd"
 	"github.com/aaudin90/opencode-reviewer/internal/diff"
@@ -97,17 +99,29 @@ func (p *Pipeline) Run(ctx context.Context) (*models.FinalReview, error) {
 		return nil, fmt.Errorf("swap agents.md: %w", err)
 	}
 
+	slog.Info("starting Phase 1: reviewer sessions", "sessions_count", len(p.messages))
 	// Phase 1: parallel reviewer sessions.
 	if err := p.runner.StartServe(ctx); err != nil {
 		return nil, fmt.Errorf("start reviewer serve: %w", err)
 	}
+	if err := p.runner.Precheck(ctx); err != nil {
+		p.runner.StopServe()
+		return nil, fmt.Errorf("reviewer precheck: %w", err)
+	}
 	phase1Results := p.runAllReviews(ctx)
 	p.runner.StopServe()
+	slog.Info("Phase 1 completed", "results", len(phase1Results))
 
+	slog.Info("starting Phase 2: finalizer")
 	// Phase 2: finalizer consolidation.
 	if err := p.finalizerRunner.StartServe(ctx); err != nil {
 		return nil, fmt.Errorf("start finalizer serve: %w", err)
 	}
+	if err := p.finalizerRunner.Precheck(ctx); err != nil {
+		p.finalizerRunner.StopServe()
+		return nil, fmt.Errorf("finalizer precheck: %w", err)
+	}
+	slog.Info("running finalizer session")
 	writtenReview, err := p.runFinalizerReview(ctx, phase1Results)
 	p.finalizerRunner.StopServe()
 	if err != nil {
@@ -192,6 +206,7 @@ func (p *Pipeline) runAllReviews(ctx context.Context) []*models.ReviewResult {
 }
 
 func (p *Pipeline) runSingleReview(ctx context.Context, message string, idx int) (*models.ReviewResult, error) {
+	slog.Info("starting review session", "prompt_index", idx)
 	var runResult *runner.RunResult
 	for event := range p.runner.Run(ctx, runner.RunRequest{
 		Prompt:     message,
@@ -357,5 +372,29 @@ func (p *Pipeline) prepareBranch() error {
 		return fmt.Errorf("checkout: %w", err)
 	}
 
+	slog.Info("project directory ready", "size_mb", dirSizeMB(p.gitClient.Dir()))
 	return nil
+}
+
+// dirSizeMB returns the total size of path in megabytes.
+// Returns -1 on error.
+func dirSizeMB(path string) int64 {
+	var total int64
+	err := filepath.WalkDir(path, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			info, infoErr := d.Info()
+			if infoErr != nil {
+				return nil
+			}
+			total += info.Size()
+		}
+		return nil
+	})
+	if err != nil {
+		return -1
+	}
+	return total / (1024 * 1024)
 }
