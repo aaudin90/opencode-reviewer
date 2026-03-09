@@ -163,12 +163,17 @@ func (r *Runner) run(ctx context.Context, req RunRequest, out chan<- RunEvent) {
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(r.cfg.StageTimeout)*time.Second)
 	defer cancel()
 
+	runStart := time.Now()
+	deadline, _ := ctx.Deadline()
+	slog.Info("run started", "stage_timeout_s", r.cfg.StageTimeout, "deadline", deadline.Format(time.RFC3339), "prompt", req.PromptPath)
+
+	createStart := time.Now()
 	sessionID, err := r.createSession(ctx)
 	if err != nil {
 		out <- RunEvent{Err: fmt.Errorf("create session: %w", err)}
 		return
 	}
-	slog.Info("session created", "id", sessionID, "prompt", req.PromptPath)
+	slog.Info("session created", "id", sessionID, "prompt", req.PromptPath, "elapsed", time.Since(createStart).String())
 
 	sseClient := sse.New(r.httpClient, r.baseURL)
 	childSessions := &sync.Map{}
@@ -202,6 +207,7 @@ func (r *Runner) run(ctx context.Context, req RunRequest, out chan<- RunEvent) {
 		}()
 
 		slog.Info("sending message to session", "session", sessionID, "attempt", attempt)
+		msgStart := time.Now()
 		resp, err := r.sendMessage(ctx, sessionID, RunRequest{Prompt: prompt, AgentName: req.AgentName})
 		if err != nil {
 			attemptCancel()
@@ -215,7 +221,7 @@ func (r *Runner) run(ctx context.Context, req RunRequest, out chan<- RunEvent) {
 		}
 		t := resp.Info.Tokens
 		slog.Info("message completed", "message", resp.Info.ID,
-			"tokens_input", t.Input, "tokens_output", t.Output)
+			"tokens_input", t.Input, "tokens_output", t.Output, "elapsed", time.Since(msgStart).String())
 
 		// After sendMessage completes, the tool call event should already be buffered.
 		// Wait toolCallWaitTimeout — if the agent called the tool the goroutine returns immediately.
@@ -232,7 +238,7 @@ func (r *Runner) run(ctx context.Context, req RunRequest, out chan<- RunEvent) {
 				}
 				slog.Info("review completed via tool call",
 					"session", sessionID, "prompt", req.PromptPath, "tool", req.ToolName, "attempt", attempt,
-					"cost", cost,
+					"elapsed", time.Since(runStart).String(), "cost", cost,
 					"tokens_input", tokens.Input, "tokens_output", tokens.Output,
 					"tokens_reasoning", tokens.Reasoning,
 					"tokens_cache_read", tokens.Cache.Read, "tokens_cache_write", tokens.Cache.Write,
@@ -248,6 +254,7 @@ func (r *Runner) run(ctx context.Context, req RunRequest, out chan<- RunEvent) {
 		case <-ctx.Done():
 			attemptCancel()
 			<-tcDone
+			slog.Error("stage timeout reached", "session", sessionID, "elapsed", time.Since(runStart).String(), "tool", req.ToolName, "attempt", attempt)
 			_ = r.abortSession(sessionID)
 			r.cleanupSession(sessionID)
 			out <- RunEvent{Err: fmt.Errorf("stage timeout: %w", ctx.Err())}
@@ -259,6 +266,7 @@ func (r *Runner) run(ctx context.Context, req RunRequest, out chan<- RunEvent) {
 	slog.Warn("all tool call retries exhausted, requesting JSON fallback",
 		"tool", req.ToolName, "session", sessionID)
 
+	msgStart := time.Now()
 	resp, err := r.sendMessage(ctx, sessionID, RunRequest{
 		Prompt:    jsonFallbackPromptFor(req.ToolName),
 		AgentName: req.AgentName,
@@ -278,8 +286,8 @@ func (r *Runner) run(ctx context.Context, req RunRequest, out chan<- RunEvent) {
 	fallbackText := r.extractText(resp.Parts)
 	slog.Info("review completed via JSON fallback",
 		"session", sessionID, "prompt", req.PromptPath, "tool", req.ToolName,
-		"length", len(fallbackText),
-		"cost", cost,
+		"elapsed", time.Since(runStart).String(), "msg_elapsed", time.Since(msgStart).String(),
+		"length", len(fallbackText), "cost", cost,
 		"tokens_input", tokens.Input, "tokens_output", tokens.Output,
 		"tokens_reasoning", tokens.Reasoning,
 		"tokens_cache_read", tokens.Cache.Read, "tokens_cache_write", tokens.Cache.Write,
@@ -312,7 +320,7 @@ func (r *Runner) Precheck(ctx context.Context) error {
 	if text == "" {
 		return fmt.Errorf("empty response")
 	}
-	slog.Info("precheck succeeded", "response", text)
+	slog.Info("precheck succeeded", "response", sanitizeLogValue(text, 256))
 	return nil
 }
 
@@ -388,6 +396,8 @@ func (r *Runner) createSession(ctx context.Context) (string, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		snippet := sanitizeLogValue(string(body), 512)
+		slog.Warn("createSession HTTP error", "status", resp.StatusCode, "body_snippet", snippet) // #nosec G706 -- sanitized above
 		return "", fmt.Errorf("unexpected status %d: %s", resp.StatusCode, body)
 	}
 
@@ -425,6 +435,8 @@ func (r *Runner) sendMessage(ctx context.Context, sessionID string, runReq RunRe
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		snippet := sanitizeLogValue(string(body), 512)
+		slog.Warn("sendMessage HTTP error", "status", resp.StatusCode, "body_snippet", snippet) // #nosec G706 -- sanitized above
 		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, body)
 	}
 
@@ -591,4 +603,14 @@ func allocatePort(hint int) (int, error) {
 	port := ln.Addr().(*net.TCPAddr).Port
 	_ = ln.Close()
 	return port, nil
+}
+
+// sanitizeLogValue truncates s to maxLen and replaces control characters
+// (newlines, carriage returns) to prevent log injection (gosec G706).
+func sanitizeLogValue(s string, maxLen int) string {
+	if len(s) > maxLen {
+		s = s[:maxLen]
+	}
+	r := strings.NewReplacer("\n", " ", "\r", " ")
+	return r.Replace(s)
 }

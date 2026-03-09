@@ -4,7 +4,7 @@ stages:
 
 unit-tests:
   stage: test
-  image: golang:1.25
+  image: golang:1.26
   variables:
     CGO_ENABLED: "1"
   script:
