@@ -1,6 +1,7 @@
 BINARY := opencode-reviewer
 BUILD_DIR := ./build
 MAIN := ./cmd/reviewer
+export GOTOOLCHAIN := go1.26.1
 
 .PHONY: dev-config run build review test linter tools deps clean
 
