@@ -430,3 +430,27 @@ func TestStopServeNilProc(t *testing.T) {
 	r := newTestRunner(config.OpenCodeConfig{Endpoint: "http://localhost:9999"})
 	r.StopServe() // should not panic
 }
+
+func TestSanitizeLogValue(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		maxLen int
+		want   string
+	}{
+		{"empty", "", 512, ""},
+		{"short", "hello", 512, "hello"},
+		{"truncate", "abcdef", 3, "abc"},
+		{"exact_len", "abc", 3, "abc"},
+		{"newlines", "line1\nline2\rline3", 512, "line1 line2 line3"},
+		{"truncate_and_sanitize", "aaa\nbbb\nccc", 7, "aaa bbb"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sanitizeLogValue(tt.input, tt.maxLen)
+			if got != tt.want {
+				t.Errorf("sanitizeLogValue(%q, %d) = %q, want %q", tt.input, tt.maxLen, got, tt.want)
+			}
+		})
+	}
+}

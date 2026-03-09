@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/aaudin90/opencode-reviewer/internal/agentsmd"
 	"github.com/aaudin90/opencode-reviewer/internal/diff"
@@ -99,6 +100,7 @@ func (p *Pipeline) Run(ctx context.Context) (*models.FinalReview, error) {
 		return nil, fmt.Errorf("swap agents.md: %w", err)
 	}
 
+	phase1Start := time.Now()
 	slog.Info("starting Phase 1: reviewer sessions", "sessions_count", len(p.messages))
 	// Phase 1: parallel reviewer sessions.
 	if err := p.runner.StartServe(ctx); err != nil {
@@ -110,8 +112,9 @@ func (p *Pipeline) Run(ctx context.Context) (*models.FinalReview, error) {
 	}
 	phase1Results := p.runAllReviews(ctx)
 	p.runner.StopServe()
-	slog.Info("Phase 1 completed", "results", len(phase1Results))
+	slog.Info("Phase 1 completed", "results", len(phase1Results), "elapsed", time.Since(phase1Start).String())
 
+	phase2Start := time.Now()
 	slog.Info("starting Phase 2: finalizer")
 	// Phase 2: finalizer consolidation.
 	if err := p.finalizerRunner.StartServe(ctx); err != nil {
@@ -125,8 +128,10 @@ func (p *Pipeline) Run(ctx context.Context) (*models.FinalReview, error) {
 	writtenReview, err := p.runFinalizerReview(ctx, phase1Results)
 	p.finalizerRunner.StopServe()
 	if err != nil {
+		slog.Error("Phase 2 failed", "elapsed", time.Since(phase2Start).String(), "error", err)
 		return nil, fmt.Errorf("finalizer review: %w", err)
 	}
+	slog.Info("Phase 2 completed", "elapsed", time.Since(phase2Start).String())
 
 	if p.reviewDumpPath != "" {
 		if dumpErr := p.saveReview(writtenReview, p.reviewDumpPath); dumpErr != nil {

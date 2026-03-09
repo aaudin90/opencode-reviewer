@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Client reads SSE events from an opencode serve endpoint.
@@ -67,6 +68,10 @@ func parseStream(
 
 	var dataLines []string
 
+	startTime := time.Now()
+	var eventCount int
+	lastHeartbeat := time.Now()
+
 	for scanner.Scan() {
 		line := scanner.Text()
 		switch {
@@ -93,6 +98,11 @@ func parseStream(
 					if args, ok := extractToolArgs(&event, sessionID, toolName); ok {
 						return args, nil
 					}
+				}
+				eventCount++
+				if time.Since(lastHeartbeat) >= 30*time.Second {
+					lastHeartbeat = time.Now()
+					slog.Info("sse heartbeat", "session", sessionID, "tool", toolName, "events_processed", eventCount, "elapsed", time.Since(startTime).String())
 				}
 			}
 			dataLines = dataLines[:0]
