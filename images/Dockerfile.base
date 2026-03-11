@@ -10,7 +10,7 @@ RUN CGO_ENABLED=0 go build -o /app/build/opencode-reviewer ./cmd/reviewer
 
 FROM almalinux:9-minimal
 
-RUN microdnf install -y git ca-certificates tar && microdnf clean all
+RUN microdnf install -y git ca-certificates tar net-tools && microdnf clean all
 
 ARG TARGETARCH
 RUN case "${TARGETARCH}" in \
