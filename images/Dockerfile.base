@@ -24,6 +24,11 @@ RUN case "${TARGETARCH}" in \
 
 COPY --from=builder /app/build/opencode-reviewer /usr/local/bin/opencode-reviewer
 
+ENV OPENCODE_DISABLE_AUTOUPDATE=true \
+    OPENCODE_DISABLE_MODELS_FETCH=true \
+    OPENCODE_DISABLE_DEFAULT_PLUGINS=true \
+    OPENCODE_DISABLE_LSP_DOWNLOAD=true
+
 RUN mkdir -p /project
 
 WORKDIR /project
