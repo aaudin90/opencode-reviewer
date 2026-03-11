@@ -8,10 +8,9 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -o /app/build/opencode-reviewer ./cmd/reviewer
 
-FROM debian:bookworm-slim
+FROM almalinux:9-minimal
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git ca-certificates curl && rm -rf /var/lib/apt/lists/*
+RUN microdnf install -y git ca-certificates tar && microdnf clean all
 
 ARG TARGETARCH
 RUN case "${TARGETARCH}" in \
