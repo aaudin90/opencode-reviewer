@@ -29,6 +29,9 @@ ENV OPENCODE_DISABLE_AUTOUPDATE=true \
     OPENCODE_DISABLE_DEFAULT_PLUGINS=true \
     OPENCODE_DISABLE_LSP_DOWNLOAD=true
 
+RUN echo "127.0.0.1 github.com" >> /etc/hosts && \
+    echo "127.0.0.1 release-assets.githubusercontent.com" >> /etc/hosts
+
 RUN mkdir -p /project
 
 WORKDIR /project
