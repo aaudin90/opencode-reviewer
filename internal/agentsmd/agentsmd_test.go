@@ -174,6 +174,63 @@ func TestSwap_WriteError(t *testing.T) {
 	}
 }
 
+func TestSwap_RemovesAgentDirs(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create .opencode and .claude directories with some content.
+	for _, name := range []string{".opencode", ".claude"} {
+		agentDir := filepath.Join(dir, name)
+		if err := os.MkdirAll(agentDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(agentDir, "config.json"), []byte("{}"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	swapper := NewSwapper(dir)
+	swapped, err := swapper.Swap()
+	if err != nil {
+		t.Fatalf("Swap: %v", err)
+	}
+
+	// Both directories should be in the returned list.
+	removedCount := 0
+	for _, p := range swapped {
+		for _, name := range []string{".opencode", ".claude"} {
+			if p == filepath.Join(dir, name) {
+				removedCount++
+			}
+		}
+	}
+	if removedCount != 2 {
+		t.Errorf("expected 2 agent dirs in swapped list, got %d; swapped = %v", removedCount, swapped)
+	}
+
+	// Directories should no longer exist.
+	for _, name := range []string{".opencode", ".claude"} {
+		agentDir := filepath.Join(dir, name)
+		if _, err := os.Stat(agentDir); !os.IsNotExist(err) {
+			t.Errorf("%s should be removed after swap", name)
+		}
+	}
+}
+
+func TestSwap_AgentDirsNotPresent(t *testing.T) {
+	dir := t.TempDir()
+
+	swapper := NewSwapper(dir)
+	swapped, err := swapper.Swap()
+	if err != nil {
+		t.Fatalf("Swap: %v", err)
+	}
+
+	// No agent dirs to remove, only root files created.
+	if len(swapped) != 0 {
+		t.Errorf("Swap returned %v, want empty", swapped)
+	}
+}
+
 func TestSwap_SkipsHeavyDirs(t *testing.T) {
 	dir := t.TempDir()
 
