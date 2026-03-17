@@ -179,6 +179,18 @@ func TestRun(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
+	mux.HandleFunc("GET /session/{id}/message", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]sessionMessage{
+			{Info: sessionMessageInfo{Role: "assistant", Cost: 0.05, Tokens: tokenUsage{Input: 100, Output: 50}}},
+		})
+	})
+
+	mux.HandleFunc("GET /session/{id}/children", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]sessionResponse{})
+	})
+
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
@@ -210,6 +222,13 @@ func TestRun(t *testing.T) {
 	}
 	if got["summary"] != "Looks good" {
 		t.Errorf("summary = %v, want Looks good", got["summary"])
+	}
+
+	if result.Stats.Cost <= 0 {
+		t.Error("Stats.Cost should be > 0")
+	}
+	if result.Stats.Tokens.Input <= 0 {
+		t.Error("Stats.Tokens.Input should be > 0")
 	}
 }
 
@@ -270,6 +289,16 @@ func TestRunRetry(t *testing.T) {
 
 	mux.HandleFunc("DELETE /session/{id}", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
+	})
+
+	mux.HandleFunc("GET /session/{id}/children", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]sessionResponse{})
+	})
+
+	mux.HandleFunc("GET /session/{id}/message", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]sessionMessage{})
 	})
 
 	srv := httptest.NewServer(mux)
@@ -347,6 +376,16 @@ func TestRunFallback(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
+	mux.HandleFunc("GET /session/{id}/children", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]sessionResponse{})
+	})
+
+	mux.HandleFunc("GET /session/{id}/message", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]sessionMessage{})
+	})
+
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
@@ -392,6 +431,11 @@ func TestRunTimeout(t *testing.T) {
 
 	mux.HandleFunc("DELETE /session/{id}", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
+	})
+
+	mux.HandleFunc("GET /session/{id}/children", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]sessionResponse{})
 	})
 
 	mux.HandleFunc("GET /event", func(w http.ResponseWriter, req *http.Request) {

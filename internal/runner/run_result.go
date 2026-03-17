@@ -8,4 +8,5 @@ import "encoding/json"
 type RunResult struct {
 	ToolArgs     json.RawMessage // non-nil: agent used submit_review tool
 	FallbackText string          // non-empty: fallback to text response
+	Stats        SessionStats
 }
