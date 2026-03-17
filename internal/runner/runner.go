@@ -177,7 +177,12 @@ func (r *Runner) run(ctx context.Context, req RunRequest, out chan<- RunEvent) {
 
 	sseClient := sse.New(r.httpClient, r.baseURL)
 	childSessions := &sync.Map{}
-	go r.pollChildren(ctx, sessionID, childSessions)
+	pollCtx, pollCancel := context.WithCancel(ctx)
+	pollDone := make(chan struct{})
+	go func() {
+		defer close(pollDone)
+		r.pollChildren(pollCtx, sessionID, childSessions)
+	}()
 
 	for attempt := range maxToolCallRetries {
 		attemptCtx, attemptCancel := context.WithCancel(ctx)
@@ -211,6 +216,7 @@ func (r *Runner) run(ctx context.Context, req RunRequest, out chan<- RunEvent) {
 		resp, err := r.sendMessage(ctx, sessionID, RunRequest{Prompt: prompt, AgentName: req.AgentName})
 		if err != nil {
 			attemptCancel()
+			pollCancel()
 			if ctx.Err() != nil {
 				slog.Warn("request timed out, aborting session", "id", sessionID)
 				_ = r.abortSession(sessionID)
@@ -231,19 +237,18 @@ func (r *Runner) run(ctx context.Context, req RunRequest, out chan<- RunEvent) {
 			attemptCancel()
 			<-tcDone
 			if res.err == nil {
-				cost, tokens, statsErr := r.getSessionStats(sessionID)
+				pollCancel()
+				<-pollDone
+				stats := r.getSessionStats(sessionID, childSessions)
 				r.cleanupSession(sessionID)
-				if statsErr != nil {
-					slog.Warn("failed to get session stats", "session", sessionID, "error", statsErr)
-				}
 				slog.Info("review completed via tool call",
 					"session", sessionID, "prompt", req.PromptPath, "tool", req.ToolName, "attempt", attempt,
-					"elapsed", time.Since(runStart).String(), "cost", cost,
-					"tokens_input", tokens.Input, "tokens_output", tokens.Output,
-					"tokens_reasoning", tokens.Reasoning,
-					"tokens_cache_read", tokens.Cache.Read, "tokens_cache_write", tokens.Cache.Write,
+					"elapsed", time.Since(runStart).String(), "cost", stats.Cost,
+					"tokens_input", stats.Tokens.Input, "tokens_output", stats.Tokens.Output,
+					"tokens_reasoning", stats.Tokens.Reasoning,
+					"tokens_cache_read", stats.Tokens.Cache.Read, "tokens_cache_write", stats.Tokens.Cache.Write,
 				)
-				out <- RunEvent{Final: &RunResult{ToolArgs: res.data}}
+				out <- RunEvent{Final: &RunResult{ToolArgs: res.data, Stats: stats}}
 				return
 			}
 			slog.Warn("agent did not call tool", "tool", req.ToolName, "attempt", attempt, "err", res.err)
@@ -254,6 +259,7 @@ func (r *Runner) run(ctx context.Context, req RunRequest, out chan<- RunEvent) {
 		case <-ctx.Done():
 			attemptCancel()
 			<-tcDone
+			pollCancel()
 			slog.Error("stage timeout reached", "session", sessionID, "elapsed", time.Since(runStart).String(), "tool", req.ToolName, "attempt", attempt)
 			_ = r.abortSession(sessionID)
 			r.cleanupSession(sessionID)
@@ -272,28 +278,28 @@ func (r *Runner) run(ctx context.Context, req RunRequest, out chan<- RunEvent) {
 		AgentName: req.AgentName,
 	})
 	if err != nil {
+		pollCancel()
 		r.cleanupSession(sessionID)
 		out <- RunEvent{Err: fmt.Errorf("json fallback message: %w", err)}
 		return
 	}
 
-	cost, tokens, statsErr := r.getSessionStats(sessionID)
+	pollCancel()
+	<-pollDone
+	stats := r.getSessionStats(sessionID, childSessions)
 	r.cleanupSession(sessionID)
-	if statsErr != nil {
-		slog.Warn("failed to get session stats", "session", sessionID, "error", statsErr)
-	}
 
 	fallbackText := r.extractText(resp.Parts)
 	slog.Info("review completed via JSON fallback",
 		"session", sessionID, "prompt", req.PromptPath, "tool", req.ToolName,
 		"elapsed", time.Since(runStart).String(), "msg_elapsed", time.Since(msgStart).String(),
-		"length", len(fallbackText), "cost", cost,
-		"tokens_input", tokens.Input, "tokens_output", tokens.Output,
-		"tokens_reasoning", tokens.Reasoning,
-		"tokens_cache_read", tokens.Cache.Read, "tokens_cache_write", tokens.Cache.Write,
+		"length", len(fallbackText), "cost", stats.Cost,
+		"tokens_input", stats.Tokens.Input, "tokens_output", stats.Tokens.Output,
+		"tokens_reasoning", stats.Tokens.Reasoning,
+		"tokens_cache_read", stats.Tokens.Cache.Read, "tokens_cache_write", stats.Tokens.Cache.Write,
 	)
 
-	out <- RunEvent{Final: &RunResult{FallbackText: fallbackText}}
+	out <- RunEvent{Final: &RunResult{FallbackText: fallbackText, Stats: stats}}
 }
 
 // Precheck creates a throwaway session, sends "ping" and verifies
@@ -490,40 +496,59 @@ func (r *Runner) cleanupSession(sessionID string) {
 	}
 }
 
-func (r *Runner) getSessionStats(sessionID string) (cost float64, tokens tokenUsage, err error) {
+func (r *Runner) getSessionStats(sessionID string, childSessions *sync.Map) SessionStats {
+	ids := []string{sessionID}
+	childSessions.Range(func(key, _ any) bool {
+		if id, ok := key.(string); ok {
+			ids = append(ids, id)
+		}
+		return true
+	})
+
+	var total SessionStats
+	for _, id := range ids {
+		s, err := r.fetchSessionStats(id)
+		if err != nil {
+			slog.Warn("failed to get stats for session", "session", id, "error", err)
+			continue
+		}
+		total = total.Add(s)
+	}
+	return total
+}
+
+func (r *Runner) fetchSessionStats(sessionID string) (SessionStats, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), abortTimeout)
 	defer cancel()
 
 	url := fmt.Sprintf("%s/session/%s/message", r.baseURL, sessionID)
 	req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if reqErr != nil {
-		return 0, tokenUsage{}, reqErr
+		return SessionStats{}, reqErr
 	}
 
 	resp, doErr := r.httpClient.Do(req) // #nosec G704 -- URL from trusted config
 	if doErr != nil {
-		return 0, tokenUsage{}, doErr
+		return SessionStats{}, doErr
 	}
 	defer resp.Body.Close()
 
 	var messages []sessionMessage
 	if decErr := json.NewDecoder(resp.Body).Decode(&messages); decErr != nil {
-		return 0, tokenUsage{}, fmt.Errorf("decode session messages: %w", decErr)
+		return SessionStats{}, fmt.Errorf("decode session messages: %w", decErr)
 	}
 
+	var stats SessionStats
 	for _, m := range messages {
 		if m.Info.Role != "assistant" {
 			continue
 		}
-		cost += m.Info.Cost
-		t := m.Info.Tokens
-		tokens.Input += t.Input
-		tokens.Output += t.Output
-		tokens.Reasoning += t.Reasoning
-		tokens.Cache.Read += t.Cache.Read
-		tokens.Cache.Write += t.Cache.Write
+		stats = stats.Add(SessionStats{
+			Cost:   m.Info.Cost,
+			Tokens: m.Info.Tokens,
+		})
 	}
-	return cost, tokens, nil
+	return stats, nil
 }
 
 func (r *Runner) getChildSessions(ctx context.Context, sessionID string) ([]string, error) {

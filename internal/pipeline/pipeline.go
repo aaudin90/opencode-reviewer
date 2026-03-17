@@ -110,7 +110,7 @@ func (p *Pipeline) Run(ctx context.Context) (*models.FinalReview, error) {
 		p.runner.StopServe()
 		return nil, fmt.Errorf("reviewer precheck: %w", err)
 	}
-	phase1Results := p.runAllReviews(ctx)
+	phase1Results, phase1Stats := p.runAllReviews(ctx)
 	p.runner.StopServe()
 	slog.Info("Phase 1 completed", "results", len(phase1Results), "elapsed", time.Since(phase1Start).String())
 
@@ -125,7 +125,7 @@ func (p *Pipeline) Run(ctx context.Context) (*models.FinalReview, error) {
 		return nil, fmt.Errorf("finalizer precheck: %w", err)
 	}
 	slog.Info("running finalizer session")
-	writtenReview, err := p.runFinalizerReview(ctx, phase1Results)
+	writtenReview, finalizerStats, err := p.runFinalizerReview(ctx, phase1Results)
 	p.finalizerRunner.StopServe()
 	if err != nil {
 		slog.Error("Phase 2 failed", "elapsed", time.Since(phase2Start).String(), "error", err)
@@ -142,6 +142,7 @@ func (p *Pipeline) Run(ctx context.Context) (*models.FinalReview, error) {
 	}
 
 	p.publishReview(ctx, writtenReview)
+	p.logTotalStats(phase1Stats, finalizerStats, len(p.messages)+1)
 
 	return writtenReview, nil
 }
@@ -164,6 +165,24 @@ func (p *Pipeline) publishReview(ctx context.Context, review *models.FinalReview
 	}
 }
 
+func (p *Pipeline) logTotalStats(reviewerStats []runner.SessionStats, finalizerStats runner.SessionStats, totalSessions int) {
+	var total runner.SessionStats
+	for _, s := range reviewerStats {
+		total = total.Add(s)
+	}
+	total = total.Add(finalizerStats)
+
+	slog.Info("total review stats",
+		"sessions", totalSessions,
+		"cost", total.Cost,
+		"tokens_input", total.Tokens.Input,
+		"tokens_output", total.Tokens.Output,
+		"tokens_reasoning", total.Tokens.Reasoning,
+		"tokens_cache_read", total.Tokens.Cache.Read,
+		"tokens_cache_write", total.Tokens.Cache.Write,
+	)
+}
+
 func (p *Pipeline) swapAgentsMD() error {
 	swapper := agentsmd.NewSwapper(p.gitClient.Dir())
 	swapped, err := swapper.Swap()
@@ -176,22 +195,23 @@ func (p *Pipeline) swapAgentsMD() error {
 
 // runAllReviews runs all Phase 1 reviewer sessions in parallel.
 // Failed sessions are logged but do not stop the pipeline.
-func (p *Pipeline) runAllReviews(ctx context.Context) []*models.ReviewResult {
+func (p *Pipeline) runAllReviews(ctx context.Context) ([]*models.ReviewResult, []runner.SessionStats) {
 	if len(p.messages) == 0 {
 		slog.Error("no messages configured: set pipeline.review_message_paths in config or OR_MESSAGE_PATHS env")
-		return nil
+		return nil, nil
 	}
 
 	resultsCh := make(chan promptRunResult, len(p.messages))
 
 	for idx, msg := range p.messages {
 		go func(message string, i int) {
-			result, runErr := p.runSingleReview(ctx, message, i)
-			resultsCh <- promptRunResult{index: i, result: result, err: runErr}
+			result, stats, runErr := p.runSingleReview(ctx, message, i)
+			resultsCh <- promptRunResult{index: i, result: result, stats: stats, err: runErr}
 		}(msg, idx)
 	}
 
 	results := make([]*models.ReviewResult, 0, len(p.messages))
+	var allStats []runner.SessionStats
 	for range p.messages {
 		r := <-resultsCh
 		if r.err != nil {
@@ -205,12 +225,13 @@ func (p *Pipeline) runAllReviews(ctx context.Context) []*models.ReviewResult {
 			"findings", len(r.result.Findings),
 		)
 		results = append(results, r.result)
+		allStats = append(allStats, r.stats)
 	}
 
-	return results
+	return results, allStats
 }
 
-func (p *Pipeline) runSingleReview(ctx context.Context, message string, idx int) (*models.ReviewResult, error) {
+func (p *Pipeline) runSingleReview(ctx context.Context, message string, idx int) (*models.ReviewResult, runner.SessionStats, error) {
 	slog.Info("starting review session", "prompt_index", idx)
 	var runResult *runner.RunResult
 	for event := range p.runner.Run(ctx, runner.RunRequest{
@@ -221,22 +242,22 @@ func (p *Pipeline) runSingleReview(ctx context.Context, message string, idx int)
 	}) {
 		switch {
 		case event.Err != nil:
-			return nil, fmt.Errorf("run review: %w", event.Err)
+			return nil, runner.SessionStats{}, fmt.Errorf("run review: %w", event.Err)
 		case event.ToolCall != nil:
 		case event.Final != nil:
 			runResult = event.Final
 		}
 	}
 	if runResult == nil {
-		return nil, fmt.Errorf("no result received")
+		return nil, runner.SessionStats{}, fmt.Errorf("no result received")
 	}
-	return p.parseResult(runResult), nil
+	return p.parseResult(runResult), runResult.Stats, nil
 }
 
-func (p *Pipeline) runFinalizerReview(ctx context.Context, phase1Results []*models.ReviewResult) (*models.FinalReview, error) {
+func (p *Pipeline) runFinalizerReview(ctx context.Context, phase1Results []*models.ReviewResult) (*models.FinalReview, runner.SessionStats, error) {
 	serialized, err := json.MarshalIndent(phase1Results, "", "  ")
 	if err != nil {
-		return nil, fmt.Errorf("marshal phase1 results: %w", err)
+		return nil, runner.SessionStats{}, fmt.Errorf("marshal phase1 results: %w", err)
 	}
 	userMessage := p.finalizerMessage + "\n\n## Phase 1 Results\n\n```json\n" + string(serialized) + "\n```"
 
@@ -249,7 +270,7 @@ func (p *Pipeline) runFinalizerReview(ctx context.Context, phase1Results []*mode
 	}) {
 		switch {
 		case event.Err != nil:
-			return nil, fmt.Errorf("finalizer session: %w", event.Err)
+			return nil, runner.SessionStats{}, fmt.Errorf("finalizer session: %w", event.Err)
 		case event.ToolCall != nil:
 		case event.Final != nil:
 			runResult = event.Final
@@ -257,7 +278,7 @@ func (p *Pipeline) runFinalizerReview(ctx context.Context, phase1Results []*mode
 	}
 
 	if runResult == nil {
-		return nil, fmt.Errorf("finalizer: no result received")
+		return nil, runner.SessionStats{}, fmt.Errorf("finalizer: no result received")
 	}
 
 	if runResult.ToolArgs != nil {
@@ -272,11 +293,11 @@ func (p *Pipeline) runFinalizerReview(ctx context.Context, phase1Results []*mode
 		if prettyBytes, jsonErr := json.MarshalIndent(runResult.ToolArgs, "", "  "); jsonErr == nil {
 			slog.Debug("finalizer review result", "result", string(prettyBytes))
 		}
-		return result, nil
+		return result, runResult.Stats, nil
 	}
 
 	slog.Warn("finalizer: using text fallback")
-	return review.ParseFinal(runResult.FallbackText), nil
+	return review.ParseFinal(runResult.FallbackText), runResult.Stats, nil
 }
 
 func (p *Pipeline) parseResult(runResult *runner.RunResult) *models.ReviewResult {

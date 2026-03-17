@@ -1,3 +1,8 @@
+---
+name: make-commit
+description: "Create atomic git commits from current changes. Splits staged/unstaged changes into logical groups (refactoring, feature, bugfix, deps), creates one commit per context with branch-name prefix. Cleans up Co-Authored-By footers. Use when: user says 'commit', 'make commit', 'закоммить', 'сделай коммит', 'split commits', or asks to commit current work."
+---
+
 # make_commit
 
 Create atomic git commits from current changes.

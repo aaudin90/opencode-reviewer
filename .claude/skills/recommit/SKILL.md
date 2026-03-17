@@ -1,3 +1,8 @@
+---
+name: recommit
+description: "Reshape all commits in the current branch into clean atomic commits. Soft-resets all branch commits back to working tree, then re-commits as logical groups following make-commit convention. Rewrites history — asks for confirmation first. Use when: user says 'recommit', 'переделай коммиты', 'rewrite commits', 'squash and split', 'reorganize commits', or wants to redo/restructure existing branch commits."
+---
+
 # recommit
 
 Reshape all commits in the current branch. Uncommits all changes back to local changes, then creates new atomic commits following make_commit rules.

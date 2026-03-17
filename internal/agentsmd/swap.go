@@ -44,7 +44,13 @@ var heavyDirs = map[string]struct{}{
 	".yarn":            {},
 	".pnpm-store":      {},
 	".opencode-review": {},
+	".opencode":        {},
+	".claude":          {},
 }
+
+// agentDirs lists directories created by AI agents that should be
+// removed from the project root before review.
+var agentDirs = []string{".opencode", ".claude"}
 
 // targetFiles lists the filenames to find and overwrite with empty content.
 var targetFiles = map[string]struct{}{
@@ -82,7 +88,11 @@ func (s *Swapper) Swap() ([]string, error) {
 		}
 	}
 
-	return overwritten, nil
+	removed, removeErr := s.removeAgentDirs()
+	if removeErr != nil {
+		return nil, fmt.Errorf("remove agent dirs: %w", removeErr)
+	}
+	return append(overwritten, removed...), nil
 }
 
 // overwriteAll walks the project tree and overwrites every AGENTS.md and CLAUDE.md
@@ -117,4 +127,21 @@ func (s *Swapper) overwriteAll() ([]string, error) {
 	})
 
 	return overwritten, err
+}
+
+// removeAgentDirs removes AI agent directories (.opencode, .claude) from the
+// project root. Returns the paths of removed directories.
+func (s *Swapper) removeAgentDirs() ([]string, error) {
+	var removed []string
+	for _, name := range agentDirs {
+		dir := filepath.Join(s.projectDir, name)
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			continue
+		}
+		if err := os.RemoveAll(dir); err != nil {
+			return nil, fmt.Errorf("remove %s: %w", name, err)
+		}
+		removed = append(removed, dir)
+	}
+	return removed, nil
 }

@@ -1,3 +1,8 @@
+---
+name: arch-flow
+description: "Read all Go source files (cmd/, internal/) and generate a detailed architecture flow diagram with Unicode box-drawing. Covers CLI entry, config resolution, workspace setup, pipeline stages, runner HTTP API, diff pipeline, and key invariants. Output in Russian. Use when: user says 'arch-flow', 'architecture', 'архитектура', 'flow diagram', 'диаграмма', or asks to visualize/document the system architecture."
+---
+
 # arch-flow
 
 Read the source code and regenerate the architecture flow diagram, saving it to `agentdocs/architecture-flow.md`.
