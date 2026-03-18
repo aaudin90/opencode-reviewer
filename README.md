@@ -70,7 +70,7 @@ project_dir = "/path/to/your/project"
   model                = "llm-proxy/kimi-k2.5"
   binary               = "opencode"
   stage_timeout        = 600
-  max_steps            = 30
+  max_steps            = 50
   min_version          = ""
   provider_config_path = "provider.json"
 
@@ -125,7 +125,7 @@ Arbitrary key-value pairs set as environment variables. Values override TOML con
 | `model` | — | LLM model identifier passed to OpenCode (e.g. `llm-proxy/kimi-k2.5`). |
 | `binary` | `opencode` | Path to the OpenCode CLI binary. Resolved via `PATH` if not absolute. |
 | `stage_timeout` | `600` | Maximum seconds allowed for a single review session. |
-| `max_steps` | `30` | Maximum agent steps per review session. |
+| `max_steps` | `50` | Maximum agent steps per review session. |
 | `min_version` | — | Minimum required OpenCode version (semver). Reviewer fails if the binary is older. |
 | `provider_config_path` | — | Path to provider JSON config. Relative to the TOML file, or absolute. |
 

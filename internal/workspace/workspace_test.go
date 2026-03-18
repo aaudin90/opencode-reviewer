@@ -262,8 +262,8 @@ func TestNew_DefaultMaxSteps(t *testing.T) {
 
 	agent := parsed["agent"].(map[string]any)
 	def := agent["default"].(map[string]any)
-	if def["steps"] != float64(30) {
-		t.Errorf("default steps = %v, want 30", def["steps"])
+	if def["steps"] != float64(50) {
+		t.Errorf("default steps = %v, want 50", def["steps"])
 	}
 }
 

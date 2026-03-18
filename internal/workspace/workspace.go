@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	defaultMaxSteps    = 30
+	defaultMaxSteps    = 50
 	reviewerAgentName  = "reviewer"
 	finalizerAgentName = "finalizer"
 	opencodeSubdir     = "opencode"

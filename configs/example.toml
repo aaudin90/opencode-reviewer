@@ -70,8 +70,8 @@ project_dir = "/path/to/your/project"
   stage_timeout = 600
 
   # max_steps: maximum agent steps per review session.
-  # Default: 30.
-  max_steps = 30
+  # Default: 50.
+  max_steps = 50
 
   # provider_config_path: path to provider JSON config (relative to this file or absolute).
   # Can also be set via OR_PROVIDER_CONFIG_PATH env var.

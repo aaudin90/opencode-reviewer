@@ -54,7 +54,7 @@ Config file (TOML) sections:
     model                   LLM model identifier (e.g. llm-proxy/kimi-k2.5)
     binary                  Path to opencode binary (default: opencode)
     stage_timeout           Timeout per stage in seconds (default: 600)
-    max_steps               Max agent steps per session (default: 30)
+    max_steps               Max agent steps per session (default: 50)
     min_version             Minimum required opencode version (semver)
     provider_config_path    Path to provider JSON config (relative to config file or absolute)
 
