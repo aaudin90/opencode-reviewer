@@ -14,7 +14,6 @@ import (
 	"github.com/aaudin90/opencode-reviewer/internal/diff"
 	"github.com/aaudin90/opencode-reviewer/internal/git"
 	"github.com/aaudin90/opencode-reviewer/internal/models"
-	"github.com/aaudin90/opencode-reviewer/internal/review"
 	"github.com/aaudin90/opencode-reviewer/internal/runner"
 	"github.com/aaudin90/opencode-reviewer/internal/vcs"
 )
@@ -41,31 +40,33 @@ type Config struct {
 }
 
 type Pipeline struct {
-	gitClient        *git.Client
-	branch           string
-	baseBranch       string
-	runner           *runner.Runner
-	finalizerRunner  *runner.Runner
-	messages         []string // reviewer message contents; must be non-empty
-	finalizerMessage string
-	publisher        vcs.Publisher
-	diffResult       *diff.Result // set by prepareDiff, used for normalization
-	reviewDumpPath   string
-	fastReviewPath   string
+	gitClient      *git.Client
+	branch         string
+	baseBranch     string
+	reviewStage    *ReviewStage
+	finalizerStage *FinalizerStage
+	publisher      vcs.Publisher
+	diffResult     *diff.Result // set by prepareDiff, used for normalization
+	reviewDumpPath string
+	fastReviewPath string
 }
 
 func New(cfg Config) *Pipeline {
 	return &Pipeline{
-		gitClient:        cfg.GitClient,
-		branch:           cfg.Branch,
-		baseBranch:       cfg.BaseBranch,
-		runner:           cfg.Runner,
-		finalizerRunner:  cfg.FinalizerRunner,
-		messages:         cfg.Messages,
-		finalizerMessage: cfg.FinalizerMessage,
-		publisher:        cfg.Publisher,
-		reviewDumpPath:   cfg.ReviewDumpPath,
-		fastReviewPath:   cfg.FastReviewPath,
+		gitClient:  cfg.GitClient,
+		branch:     cfg.Branch,
+		baseBranch: cfg.BaseBranch,
+		reviewStage: NewReviewStage(ReviewStageConfig{
+			Runner:   cfg.Runner,
+			Messages: cfg.Messages,
+		}),
+		finalizerStage: NewFinalizerStage(FinalizerStageConfig{
+			Runner:           cfg.FinalizerRunner,
+			FinalizerMessage: cfg.FinalizerMessage,
+		}),
+		publisher:      cfg.Publisher,
+		reviewDumpPath: cfg.ReviewDumpPath,
+		fastReviewPath: cfg.FastReviewPath,
 	}
 }
 
@@ -101,32 +102,16 @@ func (p *Pipeline) Run(ctx context.Context) (*models.FinalReview, error) {
 	}
 
 	phase1Start := time.Now()
-	slog.Info("starting Phase 1: reviewer sessions", "sessions_count", len(p.messages))
-	// Phase 1: parallel reviewer sessions.
-	if err := p.runner.StartServe(ctx); err != nil {
-		return nil, fmt.Errorf("start reviewer serve: %w", err)
+	slog.Info("starting Phase 1: reviewer sessions", "sessions_count", p.reviewStage.MessageCount())
+	phase1Results, phase1Stats, err := p.reviewStage.Run(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("review stage: %w", err)
 	}
-	if err := p.runner.Precheck(ctx); err != nil {
-		p.runner.StopServe()
-		return nil, fmt.Errorf("reviewer precheck: %w", err)
-	}
-	phase1Results, phase1Stats := p.runAllReviews(ctx)
-	p.runner.StopServe()
 	slog.Info("Phase 1 completed", "results", len(phase1Results), "elapsed", time.Since(phase1Start).String())
 
 	phase2Start := time.Now()
 	slog.Info("starting Phase 2: finalizer")
-	// Phase 2: finalizer consolidation.
-	if err := p.finalizerRunner.StartServe(ctx); err != nil {
-		return nil, fmt.Errorf("start finalizer serve: %w", err)
-	}
-	if err := p.finalizerRunner.Precheck(ctx); err != nil {
-		p.finalizerRunner.StopServe()
-		return nil, fmt.Errorf("finalizer precheck: %w", err)
-	}
-	slog.Info("running finalizer session")
-	writtenReview, finalizerStats, err := p.runFinalizerReview(ctx, phase1Results)
-	p.finalizerRunner.StopServe()
+	writtenReview, finalizerStats, err := p.finalizerStage.Run(ctx, phase1Results)
 	if err != nil {
 		slog.Error("Phase 2 failed", "elapsed", time.Since(phase2Start).String(), "error", err)
 		return nil, fmt.Errorf("finalizer review: %w", err)
@@ -142,7 +127,7 @@ func (p *Pipeline) Run(ctx context.Context) (*models.FinalReview, error) {
 	}
 
 	p.publishReview(ctx, writtenReview)
-	p.logTotalStats(phase1Stats, finalizerStats, len(p.messages)+1)
+	p.logTotalStats(phase1Stats, finalizerStats, len(phase1Stats)+1) // +1 for finalizer session
 
 	return writtenReview, nil
 }
@@ -191,141 +176,6 @@ func (p *Pipeline) swapAgentsMD() error {
 	}
 	slog.Info("AGENTS.md and CLAUDE.md swapped for review", "overwritten", swapped)
 	return nil
-}
-
-// runAllReviews runs all Phase 1 reviewer sessions in parallel.
-// Failed sessions are logged but do not stop the pipeline.
-func (p *Pipeline) runAllReviews(ctx context.Context) ([]*models.ReviewResult, []runner.SessionStats) {
-	if len(p.messages) == 0 {
-		slog.Error("no messages configured: set pipeline.review_message_paths in config or OR_MESSAGE_PATHS env")
-		return nil, nil
-	}
-
-	resultsCh := make(chan promptRunResult, len(p.messages))
-
-	for idx, msg := range p.messages {
-		go func(message string, i int) {
-			result, stats, runErr := p.runSingleReview(ctx, message, i)
-			resultsCh <- promptRunResult{index: i, result: result, stats: stats, err: runErr}
-		}(msg, idx)
-	}
-
-	results := make([]*models.ReviewResult, 0, len(p.messages))
-	var allStats []runner.SessionStats
-	for range p.messages {
-		r := <-resultsCh
-		if r.err != nil {
-			slog.Error("review session failed", "prompt_index", r.index, "error", r.err)
-			continue
-		}
-		slog.Info("review result",
-			"prompt_index", r.index,
-			"reviewer", r.result.ReviewerName,
-			"verdict", r.result.Verdict,
-			"findings", len(r.result.Findings),
-		)
-		results = append(results, r.result)
-		allStats = append(allStats, r.stats)
-	}
-
-	return results, allStats
-}
-
-func (p *Pipeline) runSingleReview(ctx context.Context, message string, idx int) (*models.ReviewResult, runner.SessionStats, error) {
-	slog.Info("starting review session", "prompt_index", idx)
-	var runResult *runner.RunResult
-	for event := range p.runner.Run(ctx, runner.RunRequest{
-		Prompt:     message,
-		ToolName:   "submit_review",
-		PromptPath: fmt.Sprintf("message-%d", idx),
-		AgentName:  "reviewer",
-	}) {
-		switch {
-		case event.Err != nil:
-			return nil, runner.SessionStats{}, fmt.Errorf("run review: %w", event.Err)
-		case event.ToolCall != nil:
-		case event.Final != nil:
-			runResult = event.Final
-		}
-	}
-	if runResult == nil {
-		return nil, runner.SessionStats{}, fmt.Errorf("no result received")
-	}
-	return p.parseResult(runResult), runResult.Stats, nil
-}
-
-func (p *Pipeline) runFinalizerReview(ctx context.Context, phase1Results []*models.ReviewResult) (*models.FinalReview, runner.SessionStats, error) {
-	serialized, err := json.MarshalIndent(phase1Results, "", "  ")
-	if err != nil {
-		return nil, runner.SessionStats{}, fmt.Errorf("marshal phase1 results: %w", err)
-	}
-	userMessage := p.finalizerMessage + "\n\n## Phase 1 Results\n\n```json\n" + string(serialized) + "\n```"
-
-	var runResult *runner.RunResult
-	for event := range p.finalizerRunner.Run(ctx, runner.RunRequest{
-		Prompt:     userMessage,
-		ToolName:   "submit_final_review",
-		PromptPath: "finalizer",
-		AgentName:  "finalizer",
-	}) {
-		switch {
-		case event.Err != nil:
-			return nil, runner.SessionStats{}, fmt.Errorf("finalizer session: %w", event.Err)
-		case event.ToolCall != nil:
-		case event.Final != nil:
-			runResult = event.Final
-		}
-	}
-
-	if runResult == nil {
-		return nil, runner.SessionStats{}, fmt.Errorf("finalizer: no result received")
-	}
-
-	if runResult.ToolArgs != nil {
-		result := review.ParseFinalToolArgs(runResult.ToolArgs)
-		if result.ParseErr != nil {
-			slog.Warn("failed to parse written review", "error", result.ParseErr)
-		}
-		slog.Info("finalizer review completed",
-			"verdict", result.Verdict,
-			"findings", len(result.Findings),
-		)
-		if prettyBytes, jsonErr := json.MarshalIndent(runResult.ToolArgs, "", "  "); jsonErr == nil {
-			slog.Debug("finalizer review result", "result", string(prettyBytes))
-		}
-		return result, runResult.Stats, nil
-	}
-
-	slog.Warn("finalizer: using text fallback")
-	return review.ParseFinal(runResult.FallbackText), runResult.Stats, nil
-}
-
-func (p *Pipeline) parseResult(runResult *runner.RunResult) *models.ReviewResult {
-	var reviewResult *models.ReviewResult
-	var outputBytes []byte
-
-	if runResult.ToolArgs != nil {
-		reviewResult = review.ParseToolArgs(runResult.ToolArgs)
-		outputBytes = runResult.ToolArgs
-	} else {
-		slog.Warn("using text fallback for review result")
-		reviewResult = review.Parse(runResult.FallbackText)
-		outputBytes = []byte(runResult.FallbackText)
-	}
-
-	if reviewResult.ParseErr != nil {
-		slog.Warn("failed to parse review result", "error", reviewResult.ParseErr)
-	}
-
-	prettyBytes := outputBytes
-	if runResult.ToolArgs != nil {
-		if b, jsonErr := json.MarshalIndent(json.RawMessage(outputBytes), "", "  "); jsonErr == nil {
-			prettyBytes = b
-		}
-	}
-	slog.Debug("intermediate review result", "result", string(prettyBytes))
-
-	return reviewResult
 }
 
 func (p *Pipeline) prepareDiff() (string, error) {

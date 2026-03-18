@@ -33,6 +33,10 @@ func New(httpClient *http.Client, baseURL string) *Client {
 // events receives all completed tool call events as they arrive; it is closed
 // before WaitForToolResult returns. Pass nil to disable event forwarding.
 func (c *Client) WaitForToolResult(ctx context.Context, sessionID, toolName string, childSessions *sync.Map, events chan<- ToolCall) (json.RawMessage, error) {
+	if events != nil {
+		defer close(events)
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build sse request: %w", err)
@@ -50,6 +54,7 @@ func (c *Client) WaitForToolResult(ctx context.Context, sessionID, toolName stri
 
 // parseStream reads SSE events from r and returns the input of the first
 // tool call event with status="completed" matching sessionID and toolName.
+// It does NOT close the events channel; the caller is responsible for closing it.
 // This is a pure function that can be tested with strings.NewReader.
 func parseStream(
 	r io.Reader,
@@ -57,10 +62,6 @@ func parseStream(
 	childSessions *sync.Map,
 	events chan<- ToolCall,
 ) (json.RawMessage, error) {
-	if events != nil {
-		defer close(events)
-	}
-
 	knownSessions := map[string]bool{sessionID: true}
 
 	scanner := bufio.NewScanner(r)

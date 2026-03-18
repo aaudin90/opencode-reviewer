@@ -2,7 +2,10 @@ package review
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
+
+	"github.com/aaudin90/opencode-reviewer/internal/models"
 )
 
 func TestParse_ValidFullJSON(t *testing.T) {
@@ -296,5 +299,83 @@ func TestParse_SkippedVerdict(t *testing.T) {
 	}
 	if result.Verdict != "skipped" {
 		t.Errorf("Verdict = %q, want %q", result.Verdict, "skipped")
+	}
+}
+
+func TestParseToolArgs_FindingsWrongType(t *testing.T) {
+	input := json.RawMessage(`{
+		"reviewer_name": "security",
+		"summary": "No critical issues found",
+		"verdict": "approve",
+		"findings": "no issues"
+	}`)
+
+	result := ParseToolArgs(input)
+
+	if result.ParseErr == nil {
+		t.Fatal("ParseErr = nil, want non-nil when findings has wrong type")
+	}
+	if result.ReviewerName != "security" {
+		t.Errorf("ReviewerName = %q, want %q", result.ReviewerName, "security")
+	}
+	if result.Summary != "No critical issues found" {
+		t.Errorf("Summary = %q, want %q", result.Summary, "No critical issues found")
+	}
+	if result.Verdict != "approve" {
+		t.Errorf("Verdict = %q, want %q", result.Verdict, "approve")
+	}
+}
+
+func TestIsBetterResult(t *testing.T) {
+	tests := []struct {
+		name      string
+		candidate *models.ReviewResult
+		current   *models.ReviewResult
+		want      bool
+	}{
+		{
+			name:      "candidate has no error",
+			candidate: &models.ReviewResult{Verdict: "approve"},
+			current:   &models.ReviewResult{ParseErr: fmt.Errorf("err")},
+			want:      true,
+		},
+		{
+			name:      "candidate has more findings",
+			candidate: &models.ReviewResult{ParseErr: fmt.Errorf("err"), Findings: make([]models.Finding, 2)},
+			current:   &models.ReviewResult{ParseErr: fmt.Errorf("err"), Findings: make([]models.Finding, 1)},
+			want:      true,
+		},
+		{
+			name:      "candidate has verdict, current does not",
+			candidate: &models.ReviewResult{ParseErr: fmt.Errorf("err"), Verdict: "approve"},
+			current:   &models.ReviewResult{ParseErr: fmt.Errorf("err")},
+			want:      true,
+		},
+		{
+			name:      "candidate is not better",
+			candidate: &models.ReviewResult{ParseErr: fmt.Errorf("err")},
+			current:   &models.ReviewResult{ParseErr: fmt.Errorf("err"), Verdict: "approve"},
+			want:      false,
+		},
+		{
+			name:      "candidate has error, current is clean",
+			candidate: &models.ReviewResult{ParseErr: fmt.Errorf("err"), Findings: make([]models.Finding, 5)},
+			current:   &models.ReviewResult{Verdict: "approve"},
+			want:      false,
+		},
+		{
+			name:      "both no error keeps current",
+			candidate: &models.ReviewResult{Verdict: "approve"},
+			current:   &models.ReviewResult{Verdict: "approve"},
+			want:      false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsBetterResult(tt.candidate, tt.current); got != tt.want {
+				t.Errorf("IsBetterResult() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

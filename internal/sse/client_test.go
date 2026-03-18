@@ -197,7 +197,8 @@ func TestParseStream_ChildSessionToolCallForwarded(t *testing.T) {
 		t.Errorf("verdict = %v, want approve", parsed["verdict"])
 	}
 
-	// Collect forwarded events
+	// Collect forwarded events (parseStream does not close the channel)
+	close(events)
 	var calls []ToolCall
 	for tc := range events {
 		calls = append(calls, tc)
@@ -277,6 +278,7 @@ func TestParseStream_UnknownSessionIgnored(t *testing.T) {
 	}
 
 	// Only the parent submit_review should be forwarded, NOT the unknown session's Grep
+	close(events)
 	var calls []ToolCall
 	for tc := range events {
 		calls = append(calls, tc)

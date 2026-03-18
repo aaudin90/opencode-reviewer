@@ -216,7 +216,9 @@ func (r *Runner) run(ctx context.Context, req RunRequest, out chan<- RunEvent) {
 		resp, err := r.sendMessage(ctx, sessionID, RunRequest{Prompt: prompt, AgentName: req.AgentName})
 		if err != nil {
 			attemptCancel()
+			<-tcDone
 			pollCancel()
+			<-pollDone
 			if ctx.Err() != nil {
 				slog.Warn("request timed out, aborting session", "id", sessionID)
 				_ = r.abortSession(sessionID)
@@ -260,6 +262,7 @@ func (r *Runner) run(ctx context.Context, req RunRequest, out chan<- RunEvent) {
 			attemptCancel()
 			<-tcDone
 			pollCancel()
+			<-pollDone
 			slog.Error("stage timeout reached", "session", sessionID, "elapsed", time.Since(runStart).String(), "tool", req.ToolName, "attempt", attempt)
 			_ = r.abortSession(sessionID)
 			r.cleanupSession(sessionID)
@@ -279,6 +282,7 @@ func (r *Runner) run(ctx context.Context, req RunRequest, out chan<- RunEvent) {
 	})
 	if err != nil {
 		pollCancel()
+		<-pollDone
 		r.cleanupSession(sessionID)
 		out <- RunEvent{Err: fmt.Errorf("json fallback message: %w", err)}
 		return
@@ -532,6 +536,11 @@ func (r *Runner) fetchSessionStats(sessionID string) (SessionStats, error) {
 		return SessionStats{}, doErr
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return SessionStats{}, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, body)
+	}
 
 	var messages []sessionMessage
 	if decErr := json.NewDecoder(resp.Body).Decode(&messages); decErr != nil {
