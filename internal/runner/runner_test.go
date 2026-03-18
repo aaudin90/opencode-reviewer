@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -473,6 +474,60 @@ func TestRunTimeout(t *testing.T) {
 func TestStopServeNilProc(t *testing.T) {
 	r := newTestRunner(config.OpenCodeConfig{Endpoint: "http://localhost:9999"})
 	r.StopServe() // should not panic
+}
+
+func TestFetchSessionStats_Non200(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /session/{id}/message", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	r := newTestRunner(config.OpenCodeConfig{Endpoint: srv.URL})
+	_, err := r.fetchSessionStats("test")
+	if err == nil {
+		t.Fatal("fetchSessionStats should return error for non-200 status")
+	}
+	if !strings.Contains(err.Error(), "unexpected status 500") {
+		t.Errorf("error = %v, want 'unexpected status 500'", err)
+	}
+}
+
+func TestGetSessionStats_WithChildSessions(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /session/parent/message", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]sessionMessage{
+			{Info: sessionMessageInfo{Role: "assistant", Cost: 0.10, Tokens: tokenUsage{Input: 100, Output: 50}}},
+		})
+	})
+	mux.HandleFunc("GET /session/child1/message", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]sessionMessage{
+			{Info: sessionMessageInfo{Role: "assistant", Cost: 0.05, Tokens: tokenUsage{Input: 50, Output: 25}}},
+		})
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	r := newTestRunner(config.OpenCodeConfig{Endpoint: srv.URL})
+
+	var childSessions sync.Map
+	childSessions.Store("child1", true)
+
+	stats := r.getSessionStats("parent", &childSessions)
+	if stats.Cost < 0.1499 || stats.Cost > 0.1501 {
+		t.Errorf("Cost = %v, want ~0.15", stats.Cost)
+	}
+	if stats.Tokens.Input != 150 {
+		t.Errorf("Tokens.Input = %d, want 150", stats.Tokens.Input)
+	}
+	if stats.Tokens.Output != 75 {
+		t.Errorf("Tokens.Output = %d, want 75", stats.Tokens.Output)
+	}
 }
 
 func TestSanitizeLogValue(t *testing.T) {
