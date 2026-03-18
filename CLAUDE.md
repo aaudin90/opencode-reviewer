@@ -109,14 +109,15 @@ The numeric ID corresponds to the task identifier.
 
 ## Commands
 
-**All** terminal commands and ad-hoc test scripts must be run with `NO_PROXY="*"` to bypass corporate proxy. This includes make, go, curl, opencode, git fetch/push, and any custom bash/python scripts that make network calls:
+Use `NO_PROXY="*"` only for commands that make network calls (downloading dependencies, HTTP requests, git fetch/push). Local build/test/lint commands do **not** need it.
 
 ```bash
-NO_PROXY="*" make build
-NO_PROXY="*" make run
-NO_PROXY="*" make test
 NO_PROXY="*" go mod tidy
 NO_PROXY="*" opencode serve --port 4097
+make build
+make run
+make test
+make linter
 ```
 
 - `make build` — build binary
@@ -129,8 +130,8 @@ NO_PROXY="*" opencode serve --port 4097
 ## After Code Changes
 
 After modifying code, always run:
-1. `NO_PROXY="*" make test` — tests must pass
-2. `NO_PROXY="*" make linter` — fix all reported issues (govulncheck, staticcheck, gosec included)
+1. `make test` — tests must pass
+2. `make linter` — fix all reported issues (govulncheck, staticcheck, gosec included)
 
 ## CLI Flags and Configuration Sync
 
@@ -141,7 +142,7 @@ Whenever CLI flags or environment variables are added, removed, or changed — i
 
 ## File Structure
 
-- One type per file: each struct/interface gets its own `.go` file
+- One type per file: each struct/interface gets its own `.go` file with all its methods
 - The "main" type of a package stays in the primary file (e.g., `Runner` in `runner.go`)
 - Supporting types go into separate files named after the type (e.g., `RunRequest` → `request.go`)
 

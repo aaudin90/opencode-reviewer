@@ -30,6 +30,12 @@ func ParseToolArgs(data json.RawMessage) *models.ReviewResult {
 	var args submitReviewArgs
 	if err := json.Unmarshal(data, &args); err != nil {
 		result.ParseErr = fmt.Errorf("parse tool args: %w", err)
+		var raw map[string]any
+		if mapErr := json.Unmarshal(data, &raw); mapErr == nil {
+			result.ReviewerName, _ = raw["reviewer_name"].(string)
+			result.Summary, _ = raw["summary"].(string)
+			result.Verdict, _ = raw["verdict"].(string)
+		}
 		return result
 	}
 	result.ReviewerName = args.ReviewerName
@@ -72,6 +78,26 @@ func Parse(raw string) *models.ReviewResult {
 		Raw:      raw,
 		ParseErr: fmt.Errorf("failed to parse JSON fallback response"),
 	}
+}
+
+// IsBetterResult reports whether candidate should replace current as the
+// chosen ReviewResult. A candidate without ParseErr wins over one with an error.
+// When both are error-free, current (ToolArgs) is kept. When both have errors,
+// candidate wins if it has more findings or a non-empty verdict where current has none.
+func IsBetterResult(candidate, current *models.ReviewResult) bool {
+	if candidate.ParseErr == nil && current.ParseErr != nil {
+		return true
+	}
+	if candidate.ParseErr == nil {
+		return false
+	}
+	if current.ParseErr == nil {
+		return false
+	}
+	if len(candidate.Findings) > len(current.Findings) {
+		return true
+	}
+	return candidate.Verdict != "" && current.Verdict == ""
 }
 
 // stripCodeFence removes a leading ```[lang] / ``` fence and the closing ```

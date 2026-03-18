@@ -44,8 +44,9 @@ var heavyDirs = map[string]struct{}{
 	".yarn":            {},
 	".pnpm-store":      {},
 	".opencode-review": {},
-	".opencode":        {},
-	".claude":          {},
+	// Also in agentDirs; listed here so overwriteAll skips them (removeAgentDirs deletes them after the walk).
+	".opencode": {},
+	".claude":   {},
 }
 
 // agentDirs lists directories created by AI agents that should be
@@ -135,8 +136,11 @@ func (s *Swapper) removeAgentDirs() ([]string, error) {
 	var removed []string
 	for _, name := range agentDirs {
 		dir := filepath.Join(s.projectDir, name)
-		if _, err := os.Stat(dir); os.IsNotExist(err) {
-			continue
+		if _, err := os.Stat(dir); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("stat %s: %w", name, err)
 		}
 		if err := os.RemoveAll(dir); err != nil {
 			return nil, fmt.Errorf("remove %s: %w", name, err)
