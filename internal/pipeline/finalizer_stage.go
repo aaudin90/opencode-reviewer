@@ -49,6 +49,10 @@ func (s *FinalizerStage) runFinalizerReview(ctx context.Context, phase1Results [
 		ToolName:   "submit_final_review",
 		PromptPath: "finalizer",
 		AgentName:  "finalizer",
+		ValidateFunc: func(data json.RawMessage) error {
+			return review.ParseFinalToolArgs(data).ParseErr
+		},
+		SchemaHint: finalizerSchemaHint,
 	})
 	if err != nil {
 		return nil, runner.SessionStats{}, fmt.Errorf("finalizer session: %w", err)

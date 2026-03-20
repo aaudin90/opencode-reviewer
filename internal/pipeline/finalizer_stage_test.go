@@ -61,6 +61,46 @@ func TestFinalizerStage_Run_Success(t *testing.T) {
 	}
 }
 
+func TestFinalizerStage_Run_WithValidateFunc(t *testing.T) {
+	// When tool args have invalid verdict, the stage still returns a result with ParseErr set.
+	toolArgs := map[string]any{
+		"summary":  "Consolidated",
+		"verdict":  "INVALID_VERDICT",
+		"findings": []any{},
+	}
+
+	srv := newPipelineTestServer(t, "submit_final_review", toolArgs)
+
+	r := runner.New(config.OpenCodeConfig{
+		Endpoint:     srv.URL,
+		Model:        "test/model",
+		StageTimeout: 30,
+	}, "/tmp", nil)
+
+	stage := NewFinalizerStage(FinalizerStageConfig{
+		Runner:           r,
+		FinalizerMessage: "Consolidate the reviews",
+	})
+
+	phase1Results := []*models.ReviewResult{
+		{Verdict: "approve", Summary: "LGTM"},
+	}
+
+	result, _, err := stage.Run(context.Background(), phase1Results)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if result == nil {
+		t.Fatal("result is nil")
+	}
+	if result.ParseErr == nil {
+		t.Error("ParseErr should be set for invalid verdict")
+	}
+	if result.Verdict != "INVALID_VERDICT" {
+		t.Errorf("Verdict = %q, want INVALID_VERDICT", result.Verdict)
+	}
+}
+
 func TestFinalizerStage_Run_FallbackText(t *testing.T) {
 	// When the agent never calls the tool, the runner goes through the JSON fallback path.
 	// The finalizer message response contains valid JSON that ParseFinal can parse.

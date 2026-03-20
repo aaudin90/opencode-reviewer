@@ -18,21 +18,15 @@ import (
 	"time"
 
 	"github.com/aaudin90/opencode-reviewer/internal/config"
-	"github.com/aaudin90/opencode-reviewer/internal/sse"
 	"github.com/aaudin90/opencode-reviewer/internal/workspace"
 )
-
-type sseResult struct {
-	data json.RawMessage
-	err  error
-}
 
 const (
 	healthPollInterval = 500 * time.Millisecond
 	healthTimeout      = 30 * time.Second
 	stopGracePeriod    = 10 * time.Second
 	abortTimeout       = 5 * time.Second
-	maxToolCallRetries = 3
+	maxRetries         = 3
 	// toolCallWaitTimeout is a grace period after sendMessage returns.
 	// By that point the agent has finished; if it called the expected tool,
 	// the SSE event is already buffered and sseCh fires immediately.
@@ -128,6 +122,15 @@ func (r *Runner) StartServe(ctx context.Context) error {
 	return nil
 }
 
+func schemaRetryPromptFor(toolName string, validationErr error, schemaHint string) string {
+	return fmt.Sprintf(
+		"You called `%s` but the arguments did not match the required schema.\n"+
+			"Error: %v\n"+
+			"Call the tool again with the correct schema:\n%s",
+		toolName, validationErr, schemaHint,
+	)
+}
+
 func retryPromptFor(toolName string) string {
 	return fmt.Sprintf(
 		"You did not call the `%s` tool. "+
@@ -160,150 +163,8 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) <-chan RunEvent {
 // submit_review tool call via SSE up to maxToolCallRetries times, then falls
 // back to text extraction.
 func (r *Runner) run(ctx context.Context, req RunRequest, out chan<- RunEvent) {
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(r.cfg.StageTimeout)*time.Second)
-	defer cancel()
-
-	runStart := time.Now()
-	deadline, _ := ctx.Deadline()
-	slog.Info("run started", "stage_timeout_s", r.cfg.StageTimeout, "deadline", deadline.Format(time.RFC3339), "prompt", req.PromptPath)
-
-	createStart := time.Now()
-	sessionID, err := r.createSession(ctx)
-	if err != nil {
-		out <- RunEvent{Err: fmt.Errorf("create session: %w", err)}
-		return
-	}
-	slog.Info("session created", "id", sessionID, "prompt", req.PromptPath, "elapsed", time.Since(createStart).String())
-
-	sseClient := sse.New(r.httpClient, r.baseURL)
-	childSessions := &sync.Map{}
-	pollCtx, pollCancel := context.WithCancel(ctx)
-	pollDone := make(chan struct{})
-	go func() {
-		defer close(pollDone)
-		r.pollChildren(pollCtx, sessionID, childSessions)
-	}()
-
-	for attempt := range maxToolCallRetries {
-		attemptCtx, attemptCancel := context.WithCancel(ctx)
-
-		prompt := req.Prompt
-		if attempt > 0 {
-			prompt = retryPromptFor(req.ToolName)
-			slog.Warn("retrying tool call", "tool", req.ToolName, "attempt", attempt)
-		}
-
-		// SSE goroutine starts BEFORE sendMessage to avoid missing the event.
-		events := make(chan sse.ToolCall, 256)
-		sseCh := make(chan sseResult, 1)
-		go func() {
-			data, sseErr := sseClient.WaitForToolResult(attemptCtx, sessionID, req.ToolName, childSessions, events)
-			sseCh <- sseResult{data, sseErr}
-		}()
-
-		// Forward tool call events immediately as they arrive.
-		tcDone := make(chan struct{})
-		go func() {
-			defer close(tcDone)
-			for tc := range events {
-				slog.Info("tool call", "tool", tc.Tool, "session", tc.SessionID, "args", string(tc.Input))
-				out <- RunEvent{ToolCall: &tc}
-			}
-		}()
-
-		slog.Info("sending message to session", "session", sessionID, "attempt", attempt)
-		msgStart := time.Now()
-		resp, err := r.sendMessage(ctx, sessionID, RunRequest{Prompt: prompt, AgentName: req.AgentName})
-		if err != nil {
-			attemptCancel()
-			<-tcDone
-			pollCancel()
-			<-pollDone
-			if ctx.Err() != nil {
-				slog.Warn("request timed out, aborting session", "id", sessionID)
-				_ = r.abortSession(sessionID)
-			}
-			r.cleanupSession(sessionID)
-			out <- RunEvent{Err: fmt.Errorf("send message: %w", err)}
-			return
-		}
-		t := resp.Info.Tokens
-		slog.Info("message completed", "message", resp.Info.ID,
-			"tokens_input", t.Input, "tokens_output", t.Output, "elapsed", time.Since(msgStart).String())
-
-		// After sendMessage completes, the tool call event should already be buffered.
-		// Wait toolCallWaitTimeout — if the agent called the tool the goroutine returns immediately.
-		slog.Info("waiting for tool call result", "session", sessionID, "tool", req.ToolName)
-		select {
-		case res := <-sseCh:
-			attemptCancel()
-			<-tcDone
-			if res.err == nil {
-				pollCancel()
-				<-pollDone
-				stats := r.getSessionStats(sessionID, childSessions)
-				r.cleanupSession(sessionID)
-				slog.Info("review completed via tool call",
-					"session", sessionID, "prompt", req.PromptPath, "tool", req.ToolName, "attempt", attempt,
-					"elapsed", time.Since(runStart).String(), "cost", stats.Cost,
-					"tokens_input", stats.Tokens.Input, "tokens_output", stats.Tokens.Output,
-					"tokens_reasoning", stats.Tokens.Reasoning,
-					"tokens_cache_read", stats.Tokens.Cache.Read, "tokens_cache_write", stats.Tokens.Cache.Write,
-				)
-				out <- RunEvent{Final: &RunResult{ToolArgs: res.data, Stats: stats}}
-				return
-			}
-			slog.Warn("agent did not call tool", "tool", req.ToolName, "attempt", attempt, "err", res.err)
-		case <-time.After(toolCallWaitTimeout):
-			attemptCancel()
-			<-tcDone
-			slog.Warn("tool call wait timeout, agent likely did not call tool", "tool", req.ToolName, "attempt", attempt)
-		case <-ctx.Done():
-			attemptCancel()
-			<-tcDone
-			pollCancel()
-			<-pollDone
-			slog.Error("stage timeout reached", "session", sessionID, "elapsed", time.Since(runStart).String(), "tool", req.ToolName, "attempt", attempt)
-			_ = r.abortSession(sessionID)
-			r.cleanupSession(sessionID)
-			out <- RunEvent{Err: fmt.Errorf("stage timeout: %w", ctx.Err())}
-			return
-		}
-	}
-
-	// Fallback: agent did not call the tool after all retries — request JSON response.
-	slog.Warn("all tool call retries exhausted, requesting JSON fallback",
-		"tool", req.ToolName, "session", sessionID)
-
-	msgStart := time.Now()
-	resp, err := r.sendMessage(ctx, sessionID, RunRequest{
-		Prompt:    jsonFallbackPromptFor(req.ToolName),
-		AgentName: req.AgentName,
-	})
-	if err != nil {
-		pollCancel()
-		<-pollDone
-		r.cleanupSession(sessionID)
-		out <- RunEvent{Err: fmt.Errorf("json fallback message: %w", err)}
-		return
-	}
-
-	pollCancel()
-	<-pollDone
-	stats := r.getSessionStats(sessionID, childSessions)
-	r.cleanupSession(sessionID)
-
-	fallbackText := r.extractText(resp.Parts)
-	slog.Info("review completed via JSON fallback",
-		"session", sessionID, "prompt", req.PromptPath, "tool", req.ToolName,
-		"elapsed", time.Since(runStart).String(), "msg_elapsed", time.Since(msgStart).String(),
-		"length", len(fallbackText), "cost", stats.Cost,
-		"tokens_input", stats.Tokens.Input, "tokens_output", stats.Tokens.Output,
-		"tokens_reasoning", stats.Tokens.Reasoning,
-		"tokens_cache_read", stats.Tokens.Cache.Read, "tokens_cache_write", stats.Tokens.Cache.Write,
-	)
-
-	out <- RunEvent{Final: &RunResult{FallbackText: fallbackText, Stats: stats}}
+	s := &runSession{r: r, req: req, out: out}
+	s.execute(ctx)
 }
 
 // Precheck creates a throwaway session, sends "ping" and verifies
