@@ -210,3 +210,40 @@ func TestReviewStage_ParseResult_NoToolArgs(t *testing.T) {
 		t.Errorf("Verdict = %q, want request_changes", result.Verdict)
 	}
 }
+
+func TestReviewStage_Run_WithValidateFunc(t *testing.T) {
+	// When tool args have invalid verdict, the stage still returns a result with ParseErr set.
+	toolArgs := map[string]any{
+		"reviewer_name": "security",
+		"summary":       "Issues found",
+		"verdict":       "INVALID_VERDICT",
+		"findings":      []any{},
+	}
+
+	srv := newPipelineTestServer(t, "submit_review", toolArgs)
+
+	r := runner.New(config.OpenCodeConfig{
+		Endpoint:     srv.URL,
+		Model:        "test/model",
+		StageTimeout: 30,
+	}, "/tmp", nil)
+
+	stage := NewReviewStage(ReviewStageConfig{
+		Runner:   r,
+		Messages: []string{"review this code"},
+	})
+
+	results, _, err := stage.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want 1", len(results))
+	}
+	if results[0].ParseErr == nil {
+		t.Error("ParseErr should be set for invalid verdict")
+	}
+	if results[0].Verdict != "INVALID_VERDICT" {
+		t.Errorf("Verdict = %q, want INVALID_VERDICT", results[0].Verdict)
+	}
+}

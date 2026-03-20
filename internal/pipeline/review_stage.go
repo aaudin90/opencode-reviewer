@@ -86,6 +86,10 @@ func (s *ReviewStage) runSingleReview(ctx context.Context, message string, idx i
 		ToolName:   "submit_review",
 		PromptPath: fmt.Sprintf("message-%d", idx),
 		AgentName:  "reviewer",
+		ValidateFunc: func(data json.RawMessage) error {
+			return review.ParseToolArgs(data).ParseErr
+		},
+		SchemaHint: reviewSchemaHint,
 	})
 	if err != nil {
 		return nil, runner.SessionStats{}, fmt.Errorf("run review: %w", err)
