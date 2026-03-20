@@ -553,3 +553,291 @@ func TestSanitizeLogValue(t *testing.T) {
 		})
 	}
 }
+
+// makeToolCallSSEForTool produces a valid SSE payload for any tool call.
+func makeToolCallSSEForTool(sessionID, toolName string, args any) string {
+	argsJSON, _ := json.Marshal(args)
+	payload := fmt.Sprintf(`{"type":"message.part.updated","properties":{"part":{"sessionID":%q,"type":"tool","tool":%q,"state":{"status":"completed","input":%s}}}}`,
+		sessionID, toolName, argsJSON)
+	return "event: message.part.updated\ndata: " + payload + "\n\n"
+}
+
+func TestRunSchemaRetry(t *testing.T) {
+	const toolName = "submit_review"
+	const sessionID = "sess-schema"
+
+	invalidArgs := map[string]any{
+		"summary":  "Issues found",
+		"verdict":  "INVALID",
+		"findings": []any{},
+	}
+	validArgs := map[string]any{
+		"summary":  "Issues found",
+		"verdict":  "approve",
+		"findings": []any{},
+	}
+
+	invalidSSE := makeToolCallSSEForTool(sessionID, toolName, invalidArgs)
+	validSSE := makeToolCallSSEForTool(sessionID, toolName, validArgs)
+
+	var sseCallCount atomic.Int32
+	var msgCallCount atomic.Int32
+	var msgPrompts []string
+	var msgMu sync.Mutex
+
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /event", func(w http.ResponseWriter, req *http.Request) {
+		count := sseCallCount.Add(1)
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming not supported", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.WriteHeader(http.StatusOK)
+		if count == 1 {
+			fmt.Fprint(w, invalidSSE)
+		} else {
+			fmt.Fprint(w, validSSE)
+		}
+		flusher.Flush()
+	})
+
+	mux.HandleFunc("POST /session", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(sessionResponse{ID: sessionID})
+	})
+
+	mux.HandleFunc("POST /session/{id}/message", func(w http.ResponseWriter, req *http.Request) {
+		msgCallCount.Add(1)
+		var mr messageRequest
+		if err := json.NewDecoder(req.Body).Decode(&mr); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if len(mr.Parts) > 0 {
+			msgMu.Lock()
+			msgPrompts = append(msgPrompts, mr.Parts[0].Text)
+			msgMu.Unlock()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(messageResponse{
+			Info:  messageInfo{ID: "msg-schema"},
+			Parts: []messagePart{{Type: "text", Text: "ok"}},
+		})
+	})
+
+	mux.HandleFunc("DELETE /session/{id}", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	mux.HandleFunc("GET /session/{id}/children", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]sessionResponse{})
+	})
+
+	mux.HandleFunc("GET /session/{id}/message", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]sessionMessage{
+			{Info: sessionMessageInfo{Role: "assistant", Cost: 0.01}},
+		})
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	validVerdicts := map[string]bool{
+		"approve": true, "request_changes": true, "comment_only": true, "skipped": true,
+	}
+	validateFunc := func(data json.RawMessage) error {
+		var v struct {
+			Verdict string `json:"verdict"`
+		}
+		if err := json.Unmarshal(data, &v); err != nil {
+			return err
+		}
+		if !validVerdicts[v.Verdict] {
+			return fmt.Errorf("invalid verdict %q", v.Verdict)
+		}
+		return nil
+	}
+
+	r := newTestRunner(config.OpenCodeConfig{
+		Endpoint:     srv.URL,
+		Model:        "test/model",
+		StageTimeout: 30,
+	})
+
+	result, err := collectRunResult(t, r.Run(context.Background(), RunRequest{
+		Prompt:       "review this",
+		ToolName:     toolName,
+		AgentName:    "reviewer",
+		ValidateFunc: validateFunc,
+		SchemaHint:   `{"verdict":"approve|request_changes|comment_only|skipped"}`,
+	}))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if result == nil {
+		t.Fatal("result is nil")
+	}
+	if result.ToolArgs == nil {
+		t.Fatal("ToolArgs is nil")
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(result.ToolArgs, &got); err != nil {
+		t.Fatalf("unmarshal ToolArgs: %v", err)
+	}
+	if got["verdict"] != "approve" {
+		t.Errorf("verdict = %v, want approve", got["verdict"])
+	}
+
+	msgMu.Lock()
+	prompts := msgPrompts
+	msgMu.Unlock()
+
+	foundSchemaRetry := false
+	for _, p := range prompts {
+		if strings.Contains(p, "did not match the required schema") {
+			foundSchemaRetry = true
+			break
+		}
+	}
+	if !foundSchemaRetry {
+		t.Errorf("expected at least one schema retry prompt, got prompts: %v", prompts)
+	}
+}
+
+func TestRunSchemaRetryExhausted(t *testing.T) {
+	const toolName = "submit_review"
+	const sessionID = "sess-schema-exhaust"
+
+	invalidArgs := map[string]any{
+		"summary":  "Issues found",
+		"verdict":  "INVALID",
+		"findings": []any{},
+	}
+	invalidSSE := makeToolCallSSEForTool(sessionID, toolName, invalidArgs)
+
+	var sseCallCount atomic.Int32
+	var schemaRetryCount atomic.Int32
+	var msgMu sync.Mutex
+	var msgPrompts []string
+
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /event", func(w http.ResponseWriter, req *http.Request) {
+		sseCallCount.Add(1)
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming not supported", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, invalidSSE)
+		flusher.Flush()
+	})
+
+	mux.HandleFunc("POST /session", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(sessionResponse{ID: sessionID})
+	})
+
+	mux.HandleFunc("POST /session/{id}/message", func(w http.ResponseWriter, req *http.Request) {
+		var mr messageRequest
+		if err := json.NewDecoder(req.Body).Decode(&mr); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if len(mr.Parts) > 0 {
+			msgMu.Lock()
+			msgPrompts = append(msgPrompts, mr.Parts[0].Text)
+			msgMu.Unlock()
+			if strings.Contains(mr.Parts[0].Text, "did not match the required schema") {
+				schemaRetryCount.Add(1)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(messageResponse{
+			Info:  messageInfo{ID: "msg-exhaust"},
+			Parts: []messagePart{{Type: "text", Text: "ok"}},
+		})
+	})
+
+	mux.HandleFunc("DELETE /session/{id}", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	mux.HandleFunc("GET /session/{id}/children", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]sessionResponse{})
+	})
+
+	mux.HandleFunc("GET /session/{id}/message", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]sessionMessage{
+			{Info: sessionMessageInfo{Role: "assistant", Cost: 0.01}},
+		})
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	validVerdicts := map[string]bool{
+		"approve": true, "request_changes": true, "comment_only": true, "skipped": true,
+	}
+	validateFunc := func(data json.RawMessage) error {
+		var v struct {
+			Verdict string `json:"verdict"`
+		}
+		if err := json.Unmarshal(data, &v); err != nil {
+			return err
+		}
+		if !validVerdicts[v.Verdict] {
+			return fmt.Errorf("invalid verdict %q", v.Verdict)
+		}
+		return nil
+	}
+
+	r := newTestRunner(config.OpenCodeConfig{
+		Endpoint:     srv.URL,
+		Model:        "test/model",
+		StageTimeout: 30,
+	})
+
+	result, err := collectRunResult(t, r.Run(context.Background(), RunRequest{
+		Prompt:       "review this",
+		ToolName:     toolName,
+		AgentName:    "reviewer",
+		ValidateFunc: validateFunc,
+		SchemaHint:   `{"verdict":"approve|request_changes|comment_only|skipped"}`,
+	}))
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if result == nil {
+		t.Fatal("result is nil, expected final result even when schema retries exhausted")
+	}
+	if result.ToolArgs == nil {
+		t.Fatal("ToolArgs is nil, expected last invalid args to be emitted")
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(result.ToolArgs, &got); err != nil {
+		t.Fatalf("unmarshal ToolArgs: %v", err)
+	}
+	if got["verdict"] != "INVALID" {
+		t.Errorf("verdict = %v, want INVALID (last invalid args)", got["verdict"])
+	}
+
+	if schemaRetryCount.Load() != 2 {
+		t.Errorf("schema retry count = %d, want %d", schemaRetryCount.Load(), 2)
+	}
+}
