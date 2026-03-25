@@ -188,11 +188,18 @@ func (r *Runner) Precheck(ctx context.Context) error {
 	}
 
 	text := r.extractText(resp.Parts)
-	if text == "" {
-		return fmt.Errorf("empty response")
+	if text != "" {
+		slog.Info("precheck succeeded", "response", sanitizeLogValue(text, 256))
+		return nil
 	}
-	slog.Info("precheck succeeded", "response", sanitizeLogValue(text, 256))
-	return nil
+	if resp.Info.Cost > 0 || resp.Info.Tokens.Output > 0 {
+		slog.Warn("precheck: empty text response, but tokens were used — treating as success",
+			"cost", resp.Info.Cost,
+			"output_tokens", resp.Info.Tokens.Output,
+		)
+		return nil
+	}
+	return fmt.Errorf("empty response")
 }
 
 // StopServe gracefully stops the opencode serve subprocess.
