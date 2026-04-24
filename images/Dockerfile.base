@@ -18,7 +18,7 @@ RUN case "${TARGETARCH}" in \
     arm64) ARCH=arm64 ;; \
     *) echo "Unsupported arch: ${TARGETARCH}" && exit 1 ;; \
   esac && \
-  curl -fsSL "https://github.com/anomalyco/opencode/releases/download/v1.2.27/opencode-linux-${ARCH}.tar.gz" \
+  curl -fsSL "https://github.com/anomalyco/opencode/releases/download/v1.14.24/opencode-linux-${ARCH}.tar.gz" \
     | tar -xzC /usr/local/bin && \
   chmod +x /usr/local/bin/opencode
 
