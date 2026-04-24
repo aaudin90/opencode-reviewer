@@ -12,7 +12,7 @@ Automated code review pipeline powered by [OpenCode](https://opencode.ai). It ru
 
 ## Prerequisites
 
-- Go 1.26.1
+- Go 1.26.2
 - [opencode](https://opencode.ai) CLI available in `PATH`, or configured via `opencode.binary`
 - Access to an LLM provider, configured through `provider.json`
 
