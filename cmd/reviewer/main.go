@@ -11,6 +11,7 @@ import (
 
 	"github.com/aaudin90/opencode-reviewer/internal/agentconfig"
 	"github.com/aaudin90/opencode-reviewer/internal/config"
+	"github.com/aaudin90/opencode-reviewer/internal/configdir"
 	"github.com/aaudin90/opencode-reviewer/internal/finalizerconfig"
 	"github.com/aaudin90/opencode-reviewer/internal/git"
 	"github.com/aaudin90/opencode-reviewer/internal/pipeline"
@@ -25,6 +26,7 @@ import (
 
 type CLI struct {
 	Config     string `kong:"optional,type='path',placeholder='FILE',help='Path to TOML config file. If omitted, all settings must be provided via environment variables.'"`
+	ConfigDir  string `kong:"optional,name='config-dir',type='path',placeholder='DIR',help='Path to config directory. If omitted, OR_CONFIG_DIR is used, then <project_dir>/.opencodereview auto-discovery.'"`
 	Branch     string `kong:"placeholder='BRANCH',help='Branch to review (overrides OR_BRANCH env).'"`
 	ReviewDump string `kong:"optional,name='review-dump',type='path',placeholder='FILE',help='Save final review JSON to FILE (for fast-path debugging).'"`
 	FastReview string `kong:"optional,name='fast-review',type='path',placeholder='FILE',help='Skip LLM pipeline and load review from FILE (fast-path for debugging VCS).'"`
@@ -56,7 +58,7 @@ Config file (TOML) sections:
     stage_timeout           Timeout per stage in seconds (default: 600)
     max_steps               Max agent steps per session (default: 50)
     min_version             Minimum required opencode version (semver)
-    provider_config_path    Path to provider JSON config (relative to config file or absolute)
+    provider_config_path    Path to provider JSON config (relative to config base dir or absolute)
 
   [git]
     remote                  Git remote name (default: origin)
@@ -64,17 +66,17 @@ Config file (TOML) sections:
     base_branch             Base branch for diff (default: main)
 
   [pipeline]
-    review_agent_prompt_path  Path to reviewer agent prompt file (relative to config file or absolute)
+    review_agent_prompt_path  Path to reviewer agent prompt file (relative to config base dir or absolute)
     review_agent_prompt       Inline reviewer agent prompt (alternative to path)
     review_message_paths      List of reviewer message files; each triggers a parallel session
     review_messages           Inline reviewer messages (alternative to paths)
-    finalizer_prompt_path     Path to finalizer agent prompt file (relative to config file or absolute)
+    finalizer_prompt_path     Path to finalizer agent prompt file (relative to config base dir or absolute)
     finalizer_prompt          Inline finalizer agent prompt (alternative to path)
-    finalizer_message_path    Path to finalizer user message file (relative to config file or absolute)
+    finalizer_message_path    Path to finalizer user message file (relative to config base dir or absolute)
     finalizer_message         Inline finalizer user message (alternative to path)
-    review_sub_agent_prompt_paths  Paths to reviewer sub-agent prompt files (relative or absolute)
+    review_sub_agent_prompt_paths  Paths to reviewer sub-agent prompt files (relative to config base dir or absolute)
     review_sub_agent_prompts       Inline reviewer sub-agent prompts (alternative to paths)
-    finalizer_sub_agent_prompt_paths  Paths to finalizer sub-agent prompt files (relative or absolute)
+    finalizer_sub_agent_prompt_paths  Paths to finalizer sub-agent prompt files (relative to config base dir or absolute)
     finalizer_sub_agent_prompts    Inline finalizer sub-agent prompts (alternative to paths)
 
   [gitlab]
@@ -84,6 +86,7 @@ Config file (TOML) sections:
     clear_comments            Delete open unanswered discussions before posting (default: false)
 
 Environment variables (override TOML values):
+  OR_CONFIG_DIR               Path to config directory (used by --config-dir flow and auto-default files)
   OR_PROJECT_DIR               Path to the project repository (overrides project_dir)
   OR_BRANCH                    Branch to review (overridden by --branch flag)
   OR_GIT_REMOTE                Git remote name (overrides git.remote)
@@ -113,6 +116,7 @@ Debug flags:
   --review-dump FILE    Save final review JSON to FILE after LLM pipeline (for replay with --fast-review).
   --fast-review FILE    Skip LLM pipeline and load review from FILE (fast-path for iterating on VCS publishing).
 
+Priority (config directory):  --config-dir flag > OR_CONFIG_DIR env > <project_dir>/.opencodereview (if exists).
 Priority (branch):            --branch flag > OR_BRANCH env > git.branch TOML.
 Priority (provider):          OR_PROVIDER_CONFIG_PATH > OR_PROVIDER_CONFIG > TOML path.
 Priority (agent prompt):      OR_AGENT_PROMPT_PATH > review_agent_prompt TOML > review_agent_prompt_path TOML > built-in default.
@@ -138,6 +142,28 @@ Priority (finalizer sub-agents): OR_FINALIZER_SUB_AGENT_PROMPT_PATHS > finalizer
 		os.Exit(1)
 	}
 
+	applyEnv(cfg.Env)
+	config.ApplyEnvOverrides(cfg)
+
+	effectiveConfigDir, configSource, err := configdir.Resolve(cli.ConfigDir, os.Getenv("OR_CONFIG_DIR"), cfg.ProjectDir)
+	if err != nil {
+		slog.Error("failed to resolve config directory", "error", err)
+		os.Exit(1)
+	}
+
+	if cli.Config == "" && effectiveConfigDir != "" {
+		defaultConfigPath := filepath.Join(effectiveConfigDir, "opencode-reviewer.toml")
+		if _, statErr := os.Stat(defaultConfigPath); statErr == nil { // #nosec G703 -- path from trusted config dir resolver
+			cfg, err = config.Load(defaultConfigPath)
+			if err != nil {
+				slog.Error("failed to load config from config directory", "path", defaultConfigPath, "error", err)
+				os.Exit(1)
+			}
+			applyEnv(cfg.Env)
+			config.ApplyEnvOverrides(cfg)
+		}
+	}
+
 	if cli.Branch != "" {
 		cfg.Git.Branch = cli.Branch
 	}
@@ -147,37 +173,47 @@ Priority (finalizer sub-agents): OR_FINALIZER_SUB_AGENT_PROMPT_PATHS > finalizer
 		os.Exit(1)
 	}
 
-	applyEnv(cfg.Env)
-	config.ApplyEnvOverrides(cfg)
 	initSlog()
 
-	configDir := "."
-	if cli.Config != "" {
-		configDir = filepath.Dir(cli.Config)
+	slog.Info("resolved configuration directory", "config_dir", effectiveConfigDir, "source", configSource)
+
+	if err := config.ApplyConfigDirDefaults(cfg, effectiveConfigDir); err != nil {
+		slog.Error("failed to apply config directory defaults", "error", err)
+		os.Exit(1)
 	}
 
-	providerPath := resolveRelativePath(configDir, cfg.OpenCode.ProviderConfigPath)
+	tomlDir := "."
+	if cli.Config != "" {
+		tomlDir = filepath.Dir(cli.Config)
+	}
+
+	resolutionBaseDir := tomlDir
+	if effectiveConfigDir != "" {
+		resolutionBaseDir = effectiveConfigDir
+	}
+
+	providerPath := resolveRelativePath(resolutionBaseDir, cfg.OpenCode.ProviderConfigPath)
 	providerJSON, err := providerconfig.Load(providerPath)
 	if err != nil {
 		slog.Error("failed to load provider config", "error", err)
 		os.Exit(1)
 	}
 
-	agentPath := resolveRelativePath(configDir, cfg.Pipeline.ReviewAgentPromptPath)
+	agentPath := resolveRelativePath(resolutionBaseDir, cfg.Pipeline.ReviewAgentPromptPath)
 	agentPrompt, err := agentconfig.Load(agentPath, cfg.Pipeline.ReviewAgentPrompt)
 	if err != nil {
 		slog.Error("failed to load agent prompt", "error", err)
 		os.Exit(1)
 	}
 
-	finalizerPath := resolveRelativePath(configDir, cfg.Pipeline.FinalizerPromptPath)
+	finalizerPath := resolveRelativePath(resolutionBaseDir, cfg.Pipeline.FinalizerPromptPath)
 	finalizerPrompt, err := finalizerconfig.Load(finalizerPath, cfg.Pipeline.FinalizerPrompt)
 	if err != nil {
 		slog.Error("failed to load finalizer prompt", "error", err)
 		os.Exit(1)
 	}
 
-	messages, err := promptconfig.Load(configDir, cfg.Pipeline.ReviewMessagePaths, cfg.Pipeline.ReviewMessages)
+	messages, err := promptconfig.Load(resolutionBaseDir, cfg.Pipeline.ReviewMessagePaths, cfg.Pipeline.ReviewMessages)
 	if err != nil {
 		slog.Error("failed to load review messages", "error", err)
 		os.Exit(1)
@@ -185,7 +221,7 @@ Priority (finalizer sub-agents): OR_FINALIZER_SUB_AGENT_PROMPT_PATHS > finalizer
 
 	reviewSubAgents, err := subagentconfig.Load(
 		"OR_REVIEW_SUB_AGENT_PROMPT_PATHS", "reviewer",
-		configDir,
+		resolutionBaseDir,
 		cfg.Pipeline.ReviewSubAgentPromptPaths,
 		cfg.Pipeline.ReviewSubAgentPrompts,
 	)
@@ -194,7 +230,7 @@ Priority (finalizer sub-agents): OR_FINALIZER_SUB_AGENT_PROMPT_PATHS > finalizer
 		os.Exit(1)
 	}
 
-	finalizerMsgPath := resolveRelativePath(configDir, cfg.Pipeline.FinalizerMessagePath)
+	finalizerMsgPath := resolveRelativePath(resolutionBaseDir, cfg.Pipeline.FinalizerMessagePath)
 	finalizerMessage, err := finalizerconfig.LoadMessage(finalizerMsgPath, cfg.Pipeline.FinalizerMessage)
 	if err != nil {
 		slog.Error("failed to load finalizer message", "error", err)
@@ -203,7 +239,7 @@ Priority (finalizer sub-agents): OR_FINALIZER_SUB_AGENT_PROMPT_PATHS > finalizer
 
 	finalizerSubAgents, err := subagentconfig.Load(
 		"OR_FINALIZER_SUB_AGENT_PROMPT_PATHS", "finalizer",
-		configDir,
+		resolutionBaseDir,
 		cfg.Pipeline.FinalizerSubAgentPromptPaths,
 		cfg.Pipeline.FinalizerSubAgentPrompts,
 	)
@@ -212,11 +248,19 @@ Priority (finalizer sub-agents): OR_FINALIZER_SUB_AGENT_PROMPT_PATHS > finalizer
 		os.Exit(1)
 	}
 
+	var reviewerTools map[string][]byte
+	var finalizerTools map[string][]byte
+	if effectiveConfigDir != "" {
+		reviewerTools = loadToolOverrides(filepath.Join(effectiveConfigDir, "reviewer", "tools"))
+		finalizerTools = loadToolOverrides(filepath.Join(effectiveConfigDir, "finalizer", "tools"))
+	}
+
 	reviewerWS, err := workspace.NewReviewer(workspace.Config{
-		ProviderJSON: providerJSON,
-		Model:        cfg.OpenCode.Model,
-		MaxSteps:     cfg.OpenCode.MaxSteps,
-		SubAgents:    reviewSubAgents,
+		ProviderJSON:  providerJSON,
+		Model:         cfg.OpenCode.Model,
+		MaxSteps:      cfg.OpenCode.MaxSteps,
+		SubAgents:     reviewSubAgents,
+		ToolOverrides: reviewerTools,
 	}, agentPrompt)
 	if err != nil {
 		slog.Error("failed to create reviewer workspace", "error", err)
@@ -225,10 +269,11 @@ Priority (finalizer sub-agents): OR_FINALIZER_SUB_AGENT_PROMPT_PATHS > finalizer
 	defer func() { _ = reviewerWS.Cleanup() }()
 
 	finalizerWS, err := workspace.NewFinalizer(workspace.Config{
-		ProviderJSON: providerJSON,
-		Model:        cfg.OpenCode.Model,
-		MaxSteps:     cfg.OpenCode.MaxSteps,
-		SubAgents:    finalizerSubAgents,
+		ProviderJSON:  providerJSON,
+		Model:         cfg.OpenCode.Model,
+		MaxSteps:      cfg.OpenCode.MaxSteps,
+		SubAgents:     finalizerSubAgents,
+		ToolOverrides: finalizerTools,
 	}, finalizerPrompt)
 	if err != nil {
 		slog.Error("failed to create finalizer workspace", "error", err)

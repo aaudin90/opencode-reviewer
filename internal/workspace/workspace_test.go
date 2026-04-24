@@ -289,3 +289,35 @@ func TestCleanup_Nil(t *testing.T) {
 		t.Fatalf("Cleanup on nil should not error: %v", err)
 	}
 }
+
+func TestNew_ToolOverrides(t *testing.T) {
+	ws, err := NewReviewer(Config{
+		Model: "test/model",
+		ToolOverrides: map[string][]byte{
+			"submit_review.ts": []byte("override content"),
+			"custom.ts":        []byte("custom tool"),
+		},
+	}, "Review code.")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer func() { _ = ws.Cleanup() }()
+
+	overridePath := filepath.Join(ws.Dir(), "opencode", "tools", "submit_review.ts")
+	overrideData, err := os.ReadFile(overridePath)
+	if err != nil {
+		t.Fatalf("read override tool: %v", err)
+	}
+	if string(overrideData) != "override content" {
+		t.Fatalf("submit_review.ts = %q, want override content", string(overrideData))
+	}
+
+	customPath := filepath.Join(ws.Dir(), "opencode", "tools", "custom.ts")
+	customData, err := os.ReadFile(customPath)
+	if err != nil {
+		t.Fatalf("read custom tool: %v", err)
+	}
+	if string(customData) != "custom tool" {
+		t.Fatalf("custom.ts = %q, want custom tool", string(customData))
+	}
+}

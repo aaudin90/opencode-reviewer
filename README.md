@@ -43,11 +43,20 @@ OR_PROVIDER_CONFIG_PATH=/path/to/provider.json \
   ./build/opencode-reviewer
 ```
 
+Config-directory mode:
+
+```bash
+./build/opencode-reviewer --config-dir /path/to/repo/.opencodereview --branch my-feature-branch
+```
+
+When `--config-dir` and `OR_CONFIG_DIR` are unset, the reviewer tries auto-discovery at `<project_dir>/.opencodereview`.
+
 ## CLI Flags
 
 | Flag | Type | Description |
 |---|---|---|
 | `--config FILE` | path | Path to TOML config file. Optional — all settings can be provided via environment variables. |
+| `--config-dir DIR` | path | Path to config directory. Priority: `--config-dir` > `OR_CONFIG_DIR` > auto-discovery `<project_dir>/.opencodereview`. |
 | `--branch BRANCH` | string | Branch to review. Overrides `OR_BRANCH` env and `git.branch` TOML. **Highest priority** for branch. |
 | `--review-dump FILE` | path | Save the final LLM review as JSON to FILE after the pipeline completes. Useful for capturing output to replay with `--fast-review`. |
 | `--fast-review FILE` | path | Skip the LLM pipeline and load the review from a previously saved JSON dump. Useful for iterating on VCS publishing without re-running LLM stages. |
@@ -169,6 +178,7 @@ All environment variables override their TOML counterparts when set.
 
 | Variable | Overrides | Description |
 |---|---|---|
+| `OR_CONFIG_DIR` | — | Path to config directory used when `--config-dir` is not set. |
 | `OR_PROJECT_DIR` | `project_dir` | Path to the project repository. |
 | `OR_BRANCH` | `git.branch` | Branch to review. Overridden by `--branch` CLI flag. |
 | `OR_GIT_REMOTE` | `git.remote` | Git remote name. |
@@ -197,6 +207,15 @@ All environment variables override their TOML counterparts when set.
 ### Priority Order
 
 Settings are resolved in this order (first match wins):
+
+#### Config directory
+
+```
+--config-dir flag
+  > OR_CONFIG_DIR env
+  > <project_dir>/.opencodereview (if exists)
+  > none
+```
 
 #### Branch
 

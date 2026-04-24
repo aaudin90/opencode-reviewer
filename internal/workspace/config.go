@@ -8,8 +8,9 @@ import (
 
 // Config holds parameters for workspace generation.
 type Config struct {
-	ProviderJSON json.RawMessage
-	Model        string
-	MaxSteps     int
-	SubAgents    []subagentconfig.SubAgent
+	ProviderJSON  json.RawMessage
+	Model         string
+	MaxSteps      int
+	SubAgents     []subagentconfig.SubAgent
+	ToolOverrides map[string][]byte
 }

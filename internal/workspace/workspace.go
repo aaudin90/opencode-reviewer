@@ -74,6 +74,12 @@ func newWorkspace(cfg Config, agentName, toolFileName string, toolContent []byte
 			_ = os.RemoveAll(dir)
 			return nil, fmt.Errorf("write %s: %w", toolFileName, err)
 		}
+		for name, content := range cfg.ToolOverrides {
+			if err := os.WriteFile(filepath.Join(toolsPath, name), content, 0o600); err != nil {
+				_ = os.RemoveAll(dir)
+				return nil, fmt.Errorf("write tool override %q: %w", name, err)
+			}
+		}
 
 		if err := writeAgentFile(dir, agentName, cfg, prompt); err != nil {
 			_ = os.RemoveAll(dir)
