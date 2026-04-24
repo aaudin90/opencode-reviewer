@@ -6,14 +6,14 @@ Automated code review pipeline powered by OpenCode.
 
 ```
 cmd/reviewer/main.go         → CLI entry point (kong + TOML config)
-internal/config/             → Configuration loading (TOML)
+internal/config/             → Configuration loading (TOML + ENV + config-dir defaults)
 internal/git/                → Git operations (diff, fetch, log)
 internal/diff/               → Diff parsing, filtering, context file generation
 internal/runner/             → OpenCode serve/run management
 internal/pipeline/           → Review pipeline orchestration
 internal/agentsmd/           → AGENTS.md & CLAUDE.md swap (empty for review)
-internal/agentconfig/        → Agent prompt loading (env / TOML path / file)
-internal/providerconfig/     → Provider JSON loading (env / TOML path / file)
+internal/agentconfig/        → Agent prompt loading (config-dir / TOML / deprecated env fallback)
+internal/providerconfig/     → Provider JSON loading (config-dir / TOML / deprecated env fallback)
 internal/subagentconfig/     → Sub-agent prompt loading
 internal/workspace/          → Temporary workspace for opencode config
 internal/vcs/                → VCS publisher interface, line normalizer, Markdown formatting
@@ -36,7 +36,7 @@ TOML config file (`configs/example.toml`) with sections:
 | `[opencode]` | `model`                | LLM model identifier                                  |
 | `[opencode]` | `binary`               | Path to opencode binary (default: opencode)           |
 | `[opencode]` | `stage_timeout`        | Max seconds per review stage (default: 600)           |
-| `[opencode]` | `max_steps`            | Max agent steps per session (default: 30)             |
+| `[opencode]` | `max_steps`            | Max agent steps per session (default: 50)             |
 | `[opencode]` | `min_version`          | Minimum required opencode version (semver)            |
 | `[opencode]` | `provider_config_path` | Path to provider JSON config (relative to TOML file)  |
 | `[git]`      | `remote`               | Git remote name (default: origin)                     |
@@ -60,10 +60,12 @@ TOML config file (`configs/example.toml`) with sections:
 | `[gitlab]`   | `clear_comments`           | Delete open MR discussions before posting (default: false) |
 ### Environment Variables
 
-Config file is optional — all parameters can be set via environment variables.
+Use config-dir or TOML for file-based configuration. Environment variables override scalar TOML settings; provider and prompt env vars are deprecated fallbacks when config-dir is inactive.
 
 | Variable                          | Description                                                              |
 |-----------------------------------|--------------------------------------------------------------------------|
+| `OR_CONFIG_DIR`                   | Path to config directory, used when `--config-dir` is not set            |
+| `OR_DISABLE_CONFIG_DIR_AUTO_DISCOVERY` | Disable `.opencodereview` auto-discovery (`true` or `1`)             |
 | `OR_PROJECT_DIR`                  | Path to the project repository (overrides `project_dir`)                 |
 | `OR_BRANCH`                       | Branch to review (overridden by `--branch` flag)                         |
 | `OR_GIT_REMOTE`                   | Git remote name (overrides `git.remote`)                                 |
@@ -75,14 +77,14 @@ Config file is optional — all parameters can be set via environment variables.
 | `OR_OPENCODE_STAGE_TIMEOUT`       | Timeout per stage in seconds (overrides `opencode.stage_timeout`)        |
 | `OR_OPENCODE_MAX_STEPS`           | Max agent steps per session (overrides `opencode.max_steps`)             |
 | `OR_OPENCODE_MIN_VERSION`         | Minimum opencode version (overrides `opencode.min_version`)              |
-| `OR_PROVIDER_CONFIG_PATH`         | Path to provider JSON file (overrides `opencode.provider_config_path`)   |
-| `OR_PROVIDER_CONFIG`              | Inline provider JSON config                                              |
-| `OR_AGENT_PROMPT_PATH`            | Path to reviewer agent prompt file (overrides `pipeline.review_agent_prompt_path`) |
-| `OR_MESSAGE_PATHS`                | Comma-separated paths to reviewer message files (overrides `pipeline.review_message_paths`) |
-| `OR_FINALIZER_PROMPT_PATH`        | Path to finalizer agent prompt file (overrides `pipeline.finalizer_prompt_path`) |
-| `OR_FINALIZER_MESSAGE_PATH`       | Path to finalizer user message file (overrides `pipeline.finalizer_message_path`) |
-| `OR_REVIEW_SUB_AGENT_PROMPT_PATHS`    | Comma-separated paths to reviewer sub-agent prompt files (overrides `pipeline.review_sub_agent_prompt_paths`) |
-| `OR_FINALIZER_SUB_AGENT_PROMPT_PATHS` | Comma-separated paths to finalizer sub-agent prompt files (overrides `pipeline.finalizer_sub_agent_prompt_paths`) |
+| `OR_PROVIDER_CONFIG_PATH`         | Deprecated fallback: path to provider JSON file                          |
+| `OR_PROVIDER_CONFIG`              | Deprecated fallback: inline provider JSON config                         |
+| `OR_AGENT_PROMPT_PATH`            | Deprecated fallback: path to reviewer agent prompt file                  |
+| `OR_MESSAGE_PATHS`                | Deprecated fallback: comma-separated paths to reviewer message files     |
+| `OR_FINALIZER_PROMPT_PATH`        | Deprecated fallback: path to finalizer agent prompt file                 |
+| `OR_FINALIZER_MESSAGE_PATH`       | Deprecated fallback: path to finalizer user message file                 |
+| `OR_REVIEW_SUB_AGENT_PROMPT_PATHS`    | Deprecated fallback: comma-separated paths to reviewer sub-agent prompt files |
+| `OR_FINALIZER_SUB_AGENT_PROMPT_PATHS` | Deprecated fallback: comma-separated paths to finalizer sub-agent prompt files |
 | `OR_GITLAB_URL`                   | GitLab instance URL (overrides `gitlab.url`)                             |
 | `OR_GITLAB_TOKEN`                 | GitLab private access token (overrides `gitlab.token`)                   |
 | `OR_GITLAB_PROJECT_ID`            | Numeric GitLab project ID (overrides `gitlab.project_id`)                |
@@ -91,14 +93,15 @@ Config file is optional — all parameters can be set via environment variables.
 
 ### Priority Order
 
+- **Config directory**: `--config-dir` flag > `OR_CONFIG_DIR` env > `<project_dir or cwd>/.opencodereview`
 - **Branch**: `--branch` CLI flag > `OR_BRANCH` env > `git.branch` TOML field
-- **Provider config**: `OR_PROVIDER_CONFIG_PATH` > `OR_PROVIDER_CONFIG` > TOML path
-- **Agent prompt**: `OR_AGENT_PROMPT_PATH` env > `review_agent_prompt` TOML > `review_agent_prompt_path` TOML > built-in default
-- **Messages**: `OR_MESSAGE_PATHS` env > `review_messages` TOML > `review_message_paths` TOML > (none)
-- **Finalizer prompt**: `OR_FINALIZER_PROMPT_PATH` env > `finalizer_prompt` TOML > `finalizer_prompt_path` TOML > built-in default
-- **Finalizer message**: `OR_FINALIZER_MESSAGE_PATH` env > `finalizer_message` TOML > `finalizer_message_path` TOML > built-in default
-- **Reviewer sub-agents**: `OR_REVIEW_SUB_AGENT_PROMPT_PATHS` > `review_sub_agent_prompts` TOML > `review_sub_agent_prompt_paths` TOML > (none)
-- **Finalizer sub-agents**: `OR_FINALIZER_SUB_AGENT_PROMPT_PATHS` > `finalizer_sub_agent_prompts` TOML > `finalizer_sub_agent_prompt_paths` TOML > (none)
+- **Provider config**: config-dir `provider.json` > TOML path > deprecated `OR_PROVIDER_CONFIG_PATH` / `OR_PROVIDER_CONFIG` fallback
+- **Agent prompt**: config-dir `reviewer/agent.md` > `review_agent_prompt` TOML > `review_agent_prompt_path` TOML > deprecated `OR_AGENT_PROMPT_PATH` fallback > built-in default
+- **Messages**: config-dir `reviewer/messages/*.md` > `review_messages` TOML > `review_message_paths` TOML > deprecated `OR_MESSAGE_PATHS` fallback > (none)
+- **Finalizer prompt**: config-dir `finalizer/agent.md` > `finalizer_prompt` TOML > `finalizer_prompt_path` TOML > deprecated `OR_FINALIZER_PROMPT_PATH` fallback > built-in default
+- **Finalizer message**: config-dir `finalizer/message.md` > `finalizer_message` TOML > `finalizer_message_path` TOML > deprecated `OR_FINALIZER_MESSAGE_PATH` fallback > built-in default
+- **Reviewer sub-agents**: config-dir `reviewer/sub-agents/*.md` > `review_sub_agent_prompts` TOML > `review_sub_agent_prompt_paths` TOML > deprecated `OR_REVIEW_SUB_AGENT_PROMPT_PATHS` fallback > (none)
+- **Finalizer sub-agents**: config-dir `finalizer/sub-agents/*.md` > `finalizer_sub_agent_prompts` TOML > `finalizer_sub_agent_prompt_paths` TOML > deprecated `OR_FINALIZER_SUB_AGENT_PROMPT_PATHS` fallback > (none)
 - **All other ENV vars**: override TOML value if set
 
 ## Commit Format

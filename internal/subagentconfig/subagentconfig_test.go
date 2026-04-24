@@ -252,3 +252,27 @@ func TestLoad_EnsureToolRestrictions_NoopWhenPresent(t *testing.T) {
 		t.Errorf("prompt was modified when restrictions already present:\ngot:\n%s\nwant:\n%s", result[0].Prompt, prompt)
 	}
 }
+
+func TestLoadWithOptions_DisablesLegacyEnv(t *testing.T) {
+	dir := t.TempDir()
+	envPath := filepath.Join(dir, "env.md")
+	tomlPath := filepath.Join(dir, "toml.md")
+	envPrompt := "---\nmode: subagent\n---\nenv"
+	tomlPrompt := "---\nmode: subagent\n---\ntoml"
+	if err := os.WriteFile(envPath, []byte(envPrompt), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tomlPath, []byte(tomlPrompt), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("TEST_SUB_AGENT_PATHS", envPath)
+
+	result, err := LoadWithOptions("TEST_SUB_AGENT_PATHS", "reviewer", dir, []string{"toml.md"}, nil, Options{UseLegacyEnv: false})
+	if err != nil {
+		t.Fatalf("LoadWithOptions: %v", err)
+	}
+	if len(result) != 1 || result[0].Name != "toml" || !strings.Contains(result[0].Prompt, "toml") {
+		t.Fatalf("result = %+v, want TOML path when legacy env is disabled", result)
+	}
+}

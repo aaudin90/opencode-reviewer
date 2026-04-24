@@ -6,6 +6,11 @@ import (
 	"path/filepath"
 )
 
+type Options struct {
+	UseEnv      bool
+	EnvFallback bool
+}
+
 // ReadEnvOrFile resolves a string value from three sources in priority order:
 //  1. fileEnvKey env var — treated as a file path, content is read and returned
 //  2. inlineEnvKey env var — value returned as-is
@@ -13,17 +18,23 @@ import (
 //
 // Returns empty string without error if none of the sources are set.
 func ReadEnvOrFile(fileEnvKey, inlineEnvKey, fallbackPath string) (string, error) {
-	if path := os.Getenv(fileEnvKey); path != "" {
-		cleanPath := filepath.Clean(path)
-		data, err := os.ReadFile(cleanPath) // #nosec G304 G703 -- path from trusted env var
-		if err != nil {
-			return "", fmt.Errorf("read %s=%q: %w", fileEnvKey, path, err)
-		}
-		return string(data), nil
-	}
+	return ReadEnvOrFileWithOptions(fileEnvKey, inlineEnvKey, fallbackPath, Options{UseEnv: true})
+}
 
-	if val := os.Getenv(inlineEnvKey); val != "" {
-		return val, nil
+func ReadEnvOrFileWithOptions(fileEnvKey, inlineEnvKey, fallbackPath string, opts Options) (string, error) {
+	if opts.UseEnv && !opts.EnvFallback {
+		if path := os.Getenv(fileEnvKey); path != "" {
+			cleanPath := filepath.Clean(path)
+			data, err := os.ReadFile(cleanPath) // #nosec G304 G703 -- path from trusted env var
+			if err != nil {
+				return "", fmt.Errorf("read %s=%q: %w", fileEnvKey, path, err)
+			}
+			return string(data), nil
+		}
+
+		if val := os.Getenv(inlineEnvKey); val != "" {
+			return val, nil
+		}
 	}
 
 	if fallbackPath != "" {
@@ -35,23 +46,38 @@ func ReadEnvOrFile(fileEnvKey, inlineEnvKey, fallbackPath string) (string, error
 		return string(data), nil
 	}
 
+	if opts.UseEnv && opts.EnvFallback {
+		if path := os.Getenv(fileEnvKey); path != "" {
+			cleanPath := filepath.Clean(path)
+			data, err := os.ReadFile(cleanPath) // #nosec G304 G703 -- path from trusted env var
+			if err != nil {
+				return "", fmt.Errorf("read %s=%q: %w", fileEnvKey, path, err)
+			}
+			return string(data), nil
+		}
+
+		if val := os.Getenv(inlineEnvKey); val != "" {
+			return val, nil
+		}
+	}
+
 	return "", nil
 }
 
-// Resolve loads a string value by priority:
-//  1. envPathKey — env var with file path → read file
-//  2. inlineValue — inline value from TOML (if non-empty) → return as-is
-//  3. fallbackPath — file path from TOML → read file
-//
-// Returns empty string without error if none of the sources are set.
 func Resolve(envPathKey, inlineValue, fallbackPath string) (string, error) {
-	if path := os.Getenv(envPathKey); path != "" {
-		cleanPath := filepath.Clean(path)
-		data, err := os.ReadFile(cleanPath) // #nosec G304 G703 -- path from trusted env var
-		if err != nil {
-			return "", fmt.Errorf("read %s=%q: %w", envPathKey, path, err)
+	return ResolveWithOptions(envPathKey, inlineValue, fallbackPath, Options{UseEnv: true})
+}
+
+func ResolveWithOptions(envPathKey, inlineValue, fallbackPath string, opts Options) (string, error) {
+	if opts.UseEnv && !opts.EnvFallback {
+		if path := os.Getenv(envPathKey); path != "" {
+			cleanPath := filepath.Clean(path)
+			data, err := os.ReadFile(cleanPath) // #nosec G304 G703 -- path from trusted env var
+			if err != nil {
+				return "", fmt.Errorf("read %s=%q: %w", envPathKey, path, err)
+			}
+			return string(data), nil
 		}
-		return string(data), nil
 	}
 
 	if inlineValue != "" {
@@ -65,6 +91,17 @@ func Resolve(envPathKey, inlineValue, fallbackPath string) (string, error) {
 			return "", fmt.Errorf("read config path %q: %w", fallbackPath, err)
 		}
 		return string(data), nil
+	}
+
+	if opts.UseEnv && opts.EnvFallback {
+		if path := os.Getenv(envPathKey); path != "" {
+			cleanPath := filepath.Clean(path)
+			data, err := os.ReadFile(cleanPath) // #nosec G304 G703 -- path from trusted env var
+			if err != nil {
+				return "", fmt.Errorf("read %s=%q: %w", envPathKey, path, err)
+			}
+			return string(data), nil
+		}
 	}
 
 	return "", nil

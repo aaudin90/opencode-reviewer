@@ -2,9 +2,12 @@
 # Copy to dev.toml and adjust for your project:
 #   cp configs/example.toml configs/dev.toml
 #
-# Config file is optional: all settings can be provided via environment variables.
+# Prefer --config-dir/OR_CONFIG_DIR for project-local files, or pass this TOML explicitly with --config.
+# Provider and prompt environment variables are deprecated fallbacks when config-dir is inactive.
 #
 # Environment variables (override TOML values):
+#   OR_CONFIG_DIR               Path to config directory
+#   OR_DISABLE_CONFIG_DIR_AUTO_DISCOVERY  Disable .opencodereview auto-discovery (true/1)
 #   OR_PROJECT_DIR               Path to the project repository
 #   OR_BRANCH                    Branch to review (overridden by --branch flag)
 #   OR_GIT_REMOTE                Git remote name
@@ -16,27 +19,28 @@
 #   OR_OPENCODE_STAGE_TIMEOUT    Timeout per stage in seconds
 #   OR_OPENCODE_MAX_STEPS        Max agent steps per session
 #   OR_OPENCODE_MIN_VERSION      Minimum opencode version
-#   OR_PROVIDER_CONFIG_PATH      Path to provider JSON file
-#   OR_PROVIDER_CONFIG           Inline provider JSON config
-#   OR_AGENT_PROMPT_PATH         Path to reviewer agent prompt file
-#   OR_MESSAGE_PATHS             Comma-separated paths to reviewer message files
-#   OR_FINALIZER_PROMPT_PATH     Path to finalizer agent prompt file
-#   OR_FINALIZER_MESSAGE_PATH    Path to finalizer user message file
-#   OR_REVIEW_SUB_AGENT_PROMPT_PATHS     Comma-separated paths to reviewer sub-agent prompt files
-#   OR_FINALIZER_SUB_AGENT_PROMPT_PATHS  Comma-separated paths to finalizer sub-agent prompt files
+#   OR_PROVIDER_CONFIG_PATH      Deprecated fallback: path to provider JSON file
+#   OR_PROVIDER_CONFIG           Deprecated fallback: inline provider JSON config
+#   OR_AGENT_PROMPT_PATH         Deprecated fallback: path to reviewer agent prompt file
+#   OR_MESSAGE_PATHS             Deprecated fallback: comma-separated paths to reviewer message files
+#   OR_FINALIZER_PROMPT_PATH     Deprecated fallback: path to finalizer agent prompt file
+#   OR_FINALIZER_MESSAGE_PATH    Deprecated fallback: path to finalizer user message file
+#   OR_REVIEW_SUB_AGENT_PROMPT_PATHS     Deprecated fallback: comma-separated paths to reviewer sub-agent prompt files
+#   OR_FINALIZER_SUB_AGENT_PROMPT_PATHS  Deprecated fallback: comma-separated paths to finalizer sub-agent prompt files
 #   OR_GITLAB_URL                GitLab instance URL
 #   OR_GITLAB_TOKEN              GitLab private access token
 #   OR_GITLAB_PROJECT_ID         Numeric GitLab project ID
 #   OR_GITLAB_CLEAR_COMMENTS     Clear open MR discussions before posting (true/1)
 #
+# Priority (config directory):  --config-dir flag > OR_CONFIG_DIR env > <project_dir or cwd>/.opencodereview.
 # Priority (branch):            --branch flag > OR_BRANCH env > git.branch TOML.
-# Priority (provider):          OR_PROVIDER_CONFIG_PATH > OR_PROVIDER_CONFIG > TOML path.
-# Priority (agent prompt):      OR_AGENT_PROMPT_PATH > review_agent_prompt TOML > review_agent_prompt_path TOML > built-in default.
-# Priority (messages):          OR_MESSAGE_PATHS > review_messages TOML > review_message_paths TOML > (none).
-# Priority (finalizer prompt):  OR_FINALIZER_PROMPT_PATH > finalizer_prompt TOML > finalizer_prompt_path TOML > built-in default.
-# Priority (finalizer message): OR_FINALIZER_MESSAGE_PATH > finalizer_message TOML > finalizer_message_path TOML > built-in default.
-# Priority (reviewer sub-agents):  OR_REVIEW_SUB_AGENT_PROMPT_PATHS > review_sub_agent_prompts TOML > review_sub_agent_prompt_paths TOML > (none).
-# Priority (finalizer sub-agents): OR_FINALIZER_SUB_AGENT_PROMPT_PATHS > finalizer_sub_agent_prompts TOML > finalizer_sub_agent_prompt_paths TOML > (none).
+# Priority (provider):          config-dir provider.json > TOML path > deprecated OR_PROVIDER_CONFIG_PATH/OR_PROVIDER_CONFIG fallback.
+# Priority (agent prompt):      config-dir reviewer/agent.md > review_agent_prompt TOML > review_agent_prompt_path TOML > deprecated OR_AGENT_PROMPT_PATH fallback > built-in default.
+# Priority (messages):          config-dir reviewer/messages/*.md > review_messages TOML > review_message_paths TOML > deprecated OR_MESSAGE_PATHS fallback > (none).
+# Priority (finalizer prompt):  config-dir finalizer/agent.md > finalizer_prompt TOML > finalizer_prompt_path TOML > deprecated OR_FINALIZER_PROMPT_PATH fallback > built-in default.
+# Priority (finalizer message): config-dir finalizer/message.md > finalizer_message TOML > finalizer_message_path TOML > deprecated OR_FINALIZER_MESSAGE_PATH fallback > built-in default.
+# Priority (reviewer sub-agents):  config-dir reviewer/sub-agents/*.md > review_sub_agent_prompts TOML > review_sub_agent_prompt_paths TOML > deprecated OR_REVIEW_SUB_AGENT_PROMPT_PATHS fallback > (none).
+# Priority (finalizer sub-agents): config-dir finalizer/sub-agents/*.md > finalizer_sub_agent_prompts TOML > finalizer_sub_agent_prompt_paths TOML > deprecated OR_FINALIZER_SUB_AGENT_PROMPT_PATHS fallback > (none).
 
 # project_dir: absolute path to the project repository to review.
 # Used as working directory for git, opencode serve, and output.
@@ -59,7 +63,8 @@ project_dir = "/path/to/your/project"
   port = 4096
 
   # model: LLM model identifier.
-  model = "llm-proxy/kimi-k2.5"
+  # Prefer setting it in provider.json; use this only for an explicit TOML override.
+  # model = "llm-proxy/kimi-k2.5"
 
   # binary: path to the opencode CLI binary.
   # Default: "opencode" (resolved via PATH).
@@ -74,7 +79,7 @@ project_dir = "/path/to/your/project"
   max_steps = 50
 
   # provider_config_path: path to provider JSON config (relative to this file or absolute).
-  # Can also be set via OR_PROVIDER_CONFIG_PATH env var.
+  # Deprecated env fallback when config-dir is inactive: OR_PROVIDER_CONFIG_PATH.
   provider_config_path = "provider.json"
 
 [git]
@@ -90,16 +95,16 @@ project_dir = "/path/to/your/project"
 
 [pipeline]
   # review_agent_prompt_path: path to the reviewer agent prompt file (relative to this file or absolute).
-  # Env: OR_AGENT_PROMPT_PATH
+  # Deprecated env fallback when config-dir is inactive: OR_AGENT_PROMPT_PATH.
   review_agent_prompt_path = "agent-prompt.md"
 
   # review_agent_prompt: inline reviewer agent prompt (alternative to path).
-  # If set, review_agent_prompt_path is ignored (but env path still takes priority).
+  # If set, review_agent_prompt_path is ignored.
   # review_agent_prompt = "You are a code reviewer..."
 
   # review_message_paths: list of reviewer message files (relative to this file or absolute).
   # Each file triggers a separate parallel review session.
-  # Env: OR_MESSAGE_PATHS (comma-separated paths).
+  # Deprecated env fallback when config-dir is inactive: OR_MESSAGE_PATHS (comma-separated paths).
   review_message_paths = [
     "../prompt-examples/review-bugs.md",
     "../prompt-examples/review-security.md",
@@ -108,46 +113,46 @@ project_dir = "/path/to/your/project"
   ]
 
   # review_messages: inline reviewer messages (alternative to review_message_paths).
-  # If set, review_message_paths is ignored (but env paths still take priority).
+  # If set, review_message_paths is ignored.
   # review_messages = ["Review for bugs...", "Review for security..."]
 
   # finalizer_prompt_path: path to the finalizer agent prompt file (relative to this file or absolute).
-  # Env: OR_FINALIZER_PROMPT_PATH
+  # Deprecated env fallback when config-dir is inactive: OR_FINALIZER_PROMPT_PATH.
   # finalizer_prompt_path = "finalizer.md"
 
   # finalizer_prompt: inline finalizer agent prompt (alternative to path).
-  # If set, finalizer_prompt_path is ignored (but env path still takes priority).
+  # If set, finalizer_prompt_path is ignored.
   # finalizer_prompt = "You are a finalizer..."
 
   # finalizer_message_path: path to the finalizer user message file (relative to this file or absolute).
-  # Env: OR_FINALIZER_MESSAGE_PATH
+  # Deprecated env fallback when config-dir is inactive: OR_FINALIZER_MESSAGE_PATH.
   # If not set, the built-in default message is used.
   # finalizer_message_path = "finalizer-message.md"
 
   # finalizer_message: inline finalizer user message (alternative to path).
-  # If set, finalizer_message_path is ignored (but env path still takes priority).
+  # If set, finalizer_message_path is ignored.
   # finalizer_message = "Merge and deduplicate the following findings..."
 
   # review_sub_agent_prompt_paths: paths to reviewer sub-agent prompt files (relative to this file or absolute).
   # Sub-agents run in "subagent" mode and cannot call submit_review or submit_final_review.
-  # Env: OR_REVIEW_SUB_AGENT_PROMPT_PATHS (comma-separated paths).
+  # Deprecated env fallback when config-dir is inactive: OR_REVIEW_SUB_AGENT_PROMPT_PATHS.
   # review_sub_agent_prompt_paths = [
   #   "../prompt-examples/sub-agents/reviewer-verifier.md",
   # ]
 
   # review_sub_agent_prompts: inline reviewer sub-agent prompts (alternative to paths).
-  # If set, review_sub_agent_prompt_paths is ignored (but env paths still take priority).
+  # If set, review_sub_agent_prompt_paths is ignored.
   # review_sub_agent_prompts = ["You are a verification sub-agent..."]
 
   # finalizer_sub_agent_prompt_paths: paths to finalizer sub-agent prompt files (relative to this file or absolute).
   # Sub-agents run in "subagent" mode and cannot call submit_review or submit_final_review.
-  # Env: OR_FINALIZER_SUB_AGENT_PROMPT_PATHS (comma-separated paths).
+  # Deprecated env fallback when config-dir is inactive: OR_FINALIZER_SUB_AGENT_PROMPT_PATHS.
   # finalizer_sub_agent_prompt_paths = [
   #   "../prompt-examples/sub-agents/finalizer-verifier.md",
   # ]
 
   # finalizer_sub_agent_prompts: inline finalizer sub-agent prompts (alternative to paths).
-  # If set, finalizer_sub_agent_prompt_paths is ignored (but env paths still take priority).
+  # If set, finalizer_sub_agent_prompt_paths is ignored.
   # finalizer_sub_agent_prompts = ["You are a verification sub-agent..."]
 
 # [gitlab]

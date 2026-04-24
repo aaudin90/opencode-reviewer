@@ -123,3 +123,47 @@ func TestLoad_TomlInlineOverridesTomlPaths(t *testing.T) {
 		t.Errorf("result[0] = %q, want %q (inline should take priority over paths)", result[0], "inline msg")
 	}
 }
+
+func TestLoadWithOptions_DisablesLegacyEnv(t *testing.T) {
+	dir := t.TempDir()
+	envFile := filepath.Join(dir, "env.md")
+	tomlFile := filepath.Join(dir, "toml.md")
+	if err := os.WriteFile(envFile, []byte("env content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tomlFile, []byte("toml content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("OR_MESSAGE_PATHS", envFile)
+
+	result, err := LoadWithOptions(dir, []string{"toml.md"}, nil, Options{UseLegacyEnv: false})
+	if err != nil {
+		t.Fatalf("LoadWithOptions: %v", err)
+	}
+	if len(result) != 1 || result[0] != "toml content" {
+		t.Fatalf("result = %v, want TOML path content when legacy env is disabled", result)
+	}
+}
+
+func TestLoadWithOptions_LegacyEnvFallback(t *testing.T) {
+	dir := t.TempDir()
+	envFile := filepath.Join(dir, "env.md")
+	tomlFile := filepath.Join(dir, "toml.md")
+	if err := os.WriteFile(envFile, []byte("env content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tomlFile, []byte("toml content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("OR_MESSAGE_PATHS", envFile)
+
+	result, err := LoadWithOptions(dir, []string{"toml.md"}, nil, Options{UseLegacyEnv: true, LegacyEnvFallback: true})
+	if err != nil {
+		t.Fatalf("LoadWithOptions: %v", err)
+	}
+	if len(result) != 1 || result[0] != "toml content" {
+		t.Fatalf("result = %v, want TOML path content before legacy env fallback", result)
+	}
+}

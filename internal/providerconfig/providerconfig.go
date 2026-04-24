@@ -32,12 +32,26 @@ type configShape struct {
 	Model    string                   `json:"model"`
 }
 
-// Load reads provider config JSON from OR_PROVIDER_CONFIG_PATH (priority),
-// OR_PROVIDER_CONFIG env var, or the given configPath fallback.
+type Options struct {
+	UseLegacyEnv      bool
+	LegacyEnvFallback bool
+}
+
+// Load reads provider config JSON with legacy env priority for backward compatibility.
+// Use LoadWithOptions with LegacyEnvFallback for the CLI's deprecated env fallback mode.
 // Returns validated json.RawMessage.
 // Returns nil without error if no source is available.
 func Load(configPath string) (json.RawMessage, error) {
-	raw, err := envconfig.ReadEnvOrFile("OR_PROVIDER_CONFIG_PATH", "OR_PROVIDER_CONFIG", configPath)
+	return LoadWithOptions(configPath, Options{UseLegacyEnv: true})
+}
+
+func LoadWithOptions(configPath string, opts Options) (json.RawMessage, error) {
+	raw, err := envconfig.ReadEnvOrFileWithOptions(
+		"OR_PROVIDER_CONFIG_PATH",
+		"OR_PROVIDER_CONFIG",
+		configPath,
+		envconfig.Options{UseEnv: opts.UseLegacyEnv, EnvFallback: opts.LegacyEnvFallback},
+	)
 	if err != nil {
 		return nil, fmt.Errorf("load provider config: %w", err)
 	}

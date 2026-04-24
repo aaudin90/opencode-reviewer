@@ -7,24 +7,32 @@ import (
 	"strings"
 )
 
+type Options struct {
+	UseLegacyEnv      bool
+	LegacyEnvFallback bool
+}
+
 // SubAgent holds a sub-agent's name and prompt content.
 type SubAgent struct {
 	Name   string
 	Prompt string
 }
 
-// Load resolves sub-agent prompts by priority:
-//  1. envPathsKey env var (comma-separated file paths, relative to cwd) → read files → return SubAgents with filename-based names
-//  2. tomlInline (if non-empty) → return SubAgents with generated names "sub-<prefix>-1", "sub-<prefix>-2", ...
-//  3. tomlPaths (relative to configDir) → read files → return SubAgents with filename-based names
-//  4. nil (no sub-agents configured)
+// Load resolves sub-agent prompts with legacy env priority for backward compatibility.
+// Use LoadWithOptions with LegacyEnvFallback for the CLI's deprecated env fallback mode.
 func Load(envPathsKey, prefix, configDir string, tomlPaths, tomlInline []string) ([]SubAgent, error) {
-	if raw := os.Getenv(envPathsKey); raw != "" {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return nil, fmt.Errorf("get working directory: %w", err)
+	return LoadWithOptions(envPathsKey, prefix, configDir, tomlPaths, tomlInline, Options{UseLegacyEnv: true})
+}
+
+func LoadWithOptions(envPathsKey, prefix, configDir string, tomlPaths, tomlInline []string, opts Options) ([]SubAgent, error) {
+	if opts.UseLegacyEnv && !opts.LegacyEnvFallback {
+		if raw := os.Getenv(envPathsKey); raw != "" {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return nil, fmt.Errorf("get working directory: %w", err)
+			}
+			return readAll(splitPaths(raw), cwd)
 		}
-		return readAll(splitPaths(raw), cwd)
 	}
 	if len(tomlInline) > 0 {
 		agents := make([]SubAgent, len(tomlInline))
@@ -42,6 +50,15 @@ func Load(envPathsKey, prefix, configDir string, tomlPaths, tomlInline []string)
 	}
 	if len(tomlPaths) > 0 {
 		return readAll(tomlPaths, configDir)
+	}
+	if opts.UseLegacyEnv && opts.LegacyEnvFallback {
+		if raw := os.Getenv(envPathsKey); raw != "" {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return nil, fmt.Errorf("get working directory: %w", err)
+			}
+			return readAll(splitPaths(raw), cwd)
+		}
 	}
 	return nil, nil
 }
