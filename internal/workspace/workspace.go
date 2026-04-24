@@ -74,6 +74,12 @@ func newWorkspace(cfg Config, agentName, toolFileName string, toolContent []byte
 			_ = os.RemoveAll(dir)
 			return nil, fmt.Errorf("write %s: %w", toolFileName, err)
 		}
+		for name, content := range cfg.ToolOverrides {
+			if err := os.WriteFile(filepath.Join(toolsPath, name), content, 0o600); err != nil {
+				_ = os.RemoveAll(dir)
+				return nil, fmt.Errorf("write tool override %q: %w", name, err)
+			}
+		}
 
 		if err := writeAgentFile(dir, agentName, cfg, prompt); err != nil {
 			_ = os.RemoveAll(dir)
@@ -119,8 +125,8 @@ func buildOpenCodeConfig(cfg Config, defaultAgent string) ([]byte, error) {
 		maxSteps = defaultMaxSteps
 	}
 
+	model := cfg.Model
 	content := map[string]any{
-		"model": cfg.Model,
 		"permission": map[string]any{
 			"read": "allow",
 			"glob": "allow",
@@ -150,7 +156,31 @@ func buildOpenCodeConfig(cfg Config, defaultAgent string) ([]byte, error) {
 		if p, ok := providerData["provider"]; ok {
 			content["provider"] = p
 		}
+		if model == "" {
+			if providerModel, ok := providerData["model"].(string); ok {
+				model = providerModel
+			}
+		}
+	}
+	if model != "" {
+		content["model"] = model
 	}
 
 	return json.MarshalIndent(content, "", "  ")
+}
+
+func resolveModel(cfg Config) string {
+	if cfg.Model != "" {
+		return cfg.Model
+	}
+	if len(cfg.ProviderJSON) == 0 {
+		return ""
+	}
+	var providerData struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(cfg.ProviderJSON, &providerData); err != nil {
+		return ""
+	}
+	return providerData.Model
 }

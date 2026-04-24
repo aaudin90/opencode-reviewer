@@ -111,6 +111,74 @@ func TestNew_FullConfig(t *testing.T) {
 	}
 }
 
+func TestNew_ModelDefaultsFromProviderJSON(t *testing.T) {
+	providerJSON := json.RawMessage(`{
+		"provider": {"my-proxy": {"models": {"deepseek-v4-flash": {"name": "DeepSeek"}}}},
+		"model": "my-proxy/deepseek-v4-flash"
+	}`)
+
+	ws, err := NewReviewer(Config{
+		ProviderJSON: providerJSON,
+	}, "Review code.")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer func() { _ = ws.Cleanup() }()
+
+	configPath := filepath.Join(ws.Dir(), "opencode", "opencode.json")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+	if parsed["model"] != "my-proxy/deepseek-v4-flash" {
+		t.Fatalf("model = %v, want provider JSON model", parsed["model"])
+	}
+
+	agentPath := filepath.Join(ws.Dir(), "opencode", "agents", "reviewer.md")
+	agentData, err := os.ReadFile(agentPath)
+	if err != nil {
+		t.Fatalf("read agent file: %v", err)
+	}
+	if !strings.Contains(string(agentData), "model: my-proxy/deepseek-v4-flash") {
+		t.Fatal("agent file missing provider JSON model in frontmatter")
+	}
+}
+
+func TestNew_ModelOverrideWinsOverProviderJSON(t *testing.T) {
+	providerJSON := json.RawMessage(`{
+		"provider": {"my-proxy": {"models": {"deepseek-v4-flash": {"name": "DeepSeek"}}}},
+		"model": "my-proxy/deepseek-v4-flash"
+	}`)
+
+	ws, err := NewReviewer(Config{
+		ProviderJSON: providerJSON,
+		Model:        "my-proxy/override",
+	}, "Review code.")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer func() { _ = ws.Cleanup() }()
+
+	configPath := filepath.Join(ws.Dir(), "opencode", "opencode.json")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+	if parsed["model"] != "my-proxy/override" {
+		t.Fatalf("model = %v, want explicit override", parsed["model"])
+	}
+}
+
 func TestNew_NoProvider(t *testing.T) {
 	ws, err := NewReviewer(Config{
 		Model: "test/model",
@@ -287,5 +355,37 @@ func TestCleanup_Nil(t *testing.T) {
 	var ws *Workspace
 	if err := ws.Cleanup(); err != nil {
 		t.Fatalf("Cleanup on nil should not error: %v", err)
+	}
+}
+
+func TestNew_ToolOverrides(t *testing.T) {
+	ws, err := NewReviewer(Config{
+		Model: "test/model",
+		ToolOverrides: map[string][]byte{
+			"submit_review.ts": []byte("override content"),
+			"custom.ts":        []byte("custom tool"),
+		},
+	}, "Review code.")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer func() { _ = ws.Cleanup() }()
+
+	overridePath := filepath.Join(ws.Dir(), "opencode", "tools", "submit_review.ts")
+	overrideData, err := os.ReadFile(overridePath)
+	if err != nil {
+		t.Fatalf("read override tool: %v", err)
+	}
+	if string(overrideData) != "override content" {
+		t.Fatalf("submit_review.ts = %q, want override content", string(overrideData))
+	}
+
+	customPath := filepath.Join(ws.Dir(), "opencode", "tools", "custom.ts")
+	customData, err := os.ReadFile(customPath)
+	if err != nil {
+		t.Fatalf("read custom tool: %v", err)
+	}
+	if string(customData) != "custom tool" {
+		t.Fatalf("custom.ts = %q, want custom tool", string(customData))
 	}
 }

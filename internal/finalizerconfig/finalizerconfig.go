@@ -7,11 +7,24 @@ import (
 	"github.com/aaudin90/opencode-reviewer/internal/envconfig"
 )
 
-// Load reads the finalizer agent prompt by priority:
-//
-//	OR_FINALIZER_PROMPT_PATH env (file) > inlinePrompt (TOML inline) > configPath (TOML path) > built-in default.
+type Options struct {
+	UseLegacyEnv      bool
+	LegacyEnvFallback bool
+}
+
+// Load reads the finalizer agent prompt with legacy env priority for backward compatibility.
+// Use LoadWithOptions with LegacyEnvFallback for the CLI's deprecated env fallback mode.
 func Load(configPath string, inlinePrompt string) (string, error) {
-	data, err := envconfig.Resolve("OR_FINALIZER_PROMPT_PATH", inlinePrompt, configPath)
+	return LoadWithOptions(configPath, inlinePrompt, Options{UseLegacyEnv: true})
+}
+
+func LoadWithOptions(configPath string, inlinePrompt string, opts Options) (string, error) {
+	data, err := envconfig.ResolveWithOptions(
+		"OR_FINALIZER_PROMPT_PATH",
+		inlinePrompt,
+		configPath,
+		envconfig.Options{UseEnv: opts.UseLegacyEnv, EnvFallback: opts.LegacyEnvFallback},
+	)
 	if err != nil {
 		return "", fmt.Errorf("load finalizer prompt: %w", err)
 	}
@@ -21,11 +34,19 @@ func Load(configPath string, inlinePrompt string) (string, error) {
 	return data, nil
 }
 
-// LoadMessage reads the finalizer user message by priority:
-//
-//	OR_FINALIZER_MESSAGE_PATH env (file) > inlineMessage (TOML inline) > configPath (TOML path) > built-in default.
+// LoadMessage reads the finalizer user message with legacy env priority for backward compatibility.
+// Use LoadMessageWithOptions with LegacyEnvFallback for the CLI's deprecated env fallback mode.
 func LoadMessage(configPath string, inlineMessage string) (string, error) {
-	data, err := envconfig.Resolve("OR_FINALIZER_MESSAGE_PATH", inlineMessage, configPath)
+	return LoadMessageWithOptions(configPath, inlineMessage, Options{UseLegacyEnv: true})
+}
+
+func LoadMessageWithOptions(configPath string, inlineMessage string, opts Options) (string, error) {
+	data, err := envconfig.ResolveWithOptions(
+		"OR_FINALIZER_MESSAGE_PATH",
+		inlineMessage,
+		configPath,
+		envconfig.Options{UseEnv: opts.UseLegacyEnv, EnvFallback: opts.LegacyEnvFallback},
+	)
 	if err != nil {
 		return "", fmt.Errorf("load finalizer message: %w", err)
 	}

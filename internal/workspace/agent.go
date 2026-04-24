@@ -12,6 +12,7 @@ func writeAgentFile(dir, name string, cfg Config, prompt string) error {
 		return fmt.Errorf("create agents dir: %w", err)
 	}
 
+	model := resolveModel(cfg)
 	content := fmt.Sprintf(`---
 description: "Automated code reviewer"
 model: %s
@@ -22,7 +23,7 @@ permission:
 ---
 
 %s
-`, cfg.Model, prompt)
+`, model, prompt)
 
 	path := filepath.Join(agentDir, name+".md")
 	return os.WriteFile(path, []byte(content), 0o600)

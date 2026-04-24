@@ -251,3 +251,67 @@ func TestLoad_EnvOverridesConfigPath(t *testing.T) {
 		t.Error("expected env-provider, env should take priority over configPath")
 	}
 }
+
+func TestLoadWithOptions_DisablesLegacyEnv(t *testing.T) {
+	envVal := `{
+		"provider": {"env-provider": {"models": {"m": {}}}},
+		"model": "env-provider/m"
+	}`
+	fileVal := `{
+		"provider": {"file-provider": {"models": {"m": {}}}},
+		"model": "file-provider/m"
+	}`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "provider.json")
+	if err := os.WriteFile(path, []byte(fileVal), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("OR_PROVIDER_CONFIG", envVal)
+	t.Setenv("OR_PROVIDER_CONFIG_PATH", "")
+
+	data, err := LoadWithOptions(path, Options{UseLegacyEnv: false})
+	if err != nil {
+		t.Fatalf("LoadWithOptions: %v", err)
+	}
+
+	var cfg configShape
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cfg.Provider["file-provider"]; !ok {
+		t.Error("expected file-provider, legacy env should be ignored")
+	}
+}
+
+func TestLoadWithOptions_LegacyEnvFallback(t *testing.T) {
+	envVal := `{
+		"provider": {"env-provider": {"models": {"m": {}}}},
+		"model": "env-provider/m"
+	}`
+	fileVal := `{
+		"provider": {"file-provider": {"models": {"m": {}}}},
+		"model": "file-provider/m"
+	}`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "provider.json")
+	if err := os.WriteFile(path, []byte(fileVal), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("OR_PROVIDER_CONFIG", envVal)
+	t.Setenv("OR_PROVIDER_CONFIG_PATH", "")
+
+	data, err := LoadWithOptions(path, Options{UseLegacyEnv: true, LegacyEnvFallback: true})
+	if err != nil {
+		t.Fatalf("LoadWithOptions: %v", err)
+	}
+
+	var cfg configShape
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cfg.Provider["file-provider"]; !ok {
+		t.Error("expected file-provider, fallback env should not override config path")
+	}
+}

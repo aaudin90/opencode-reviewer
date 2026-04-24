@@ -7,24 +7,41 @@ import (
 	"strings"
 )
 
-// Load resolves reviewer messages by priority:
-//  1. OR_MESSAGE_PATHS env (comma-separated file paths, relative to cwd) → read files → return contents
-//  2. tomlInline (if non-empty) → return as-is
-//  3. tomlPaths (relative to configDir) → read files → return contents
-//  4. nil (caller decides what to do)
+type Options struct {
+	UseLegacyEnv      bool
+	LegacyEnvFallback bool
+}
+
+// Load resolves reviewer messages with legacy env priority for backward compatibility.
+// Use LoadWithOptions with LegacyEnvFallback for the CLI's deprecated env fallback mode.
 func Load(configDir string, tomlPaths []string, tomlInline []string) ([]string, error) {
-	if raw := os.Getenv("OR_MESSAGE_PATHS"); raw != "" {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return nil, fmt.Errorf("get working directory: %w", err)
+	return LoadWithOptions(configDir, tomlPaths, tomlInline, Options{UseLegacyEnv: true})
+}
+
+func LoadWithOptions(configDir string, tomlPaths []string, tomlInline []string, opts Options) ([]string, error) {
+	if opts.UseLegacyEnv && !opts.LegacyEnvFallback {
+		if raw := os.Getenv("OR_MESSAGE_PATHS"); raw != "" {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return nil, fmt.Errorf("get working directory: %w", err)
+			}
+			return readAll(splitPaths(raw), cwd)
 		}
-		return readAll(splitPaths(raw), cwd)
 	}
 	if len(tomlInline) > 0 {
 		return tomlInline, nil
 	}
 	if len(tomlPaths) > 0 {
 		return readAll(tomlPaths, configDir)
+	}
+	if opts.UseLegacyEnv && opts.LegacyEnvFallback {
+		if raw := os.Getenv("OR_MESSAGE_PATHS"); raw != "" {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return nil, fmt.Errorf("get working directory: %w", err)
+			}
+			return readAll(splitPaths(raw), cwd)
+		}
 	}
 	return nil, nil
 }

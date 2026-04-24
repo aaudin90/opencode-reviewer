@@ -125,3 +125,48 @@ func TestLoad_EnvFileOverridesAll(t *testing.T) {
 		t.Errorf("prompt = %q, want env file to take priority over inline and configPath", prompt)
 	}
 }
+
+func TestLoadWithOptions_DisablesLegacyEnv(t *testing.T) {
+	dir := t.TempDir()
+	envPath := filepath.Join(dir, "env-agent.txt")
+	if err := os.WriteFile(envPath, []byte("env file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tomlPath := filepath.Join(dir, "toml-agent.txt")
+	if err := os.WriteFile(tomlPath, []byte("toml file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("OR_AGENT_PROMPT_PATH", envPath)
+
+	prompt, err := LoadWithOptions(tomlPath, "", Options{UseLegacyEnv: false})
+	if err != nil {
+		t.Fatalf("LoadWithOptions: %v", err)
+	}
+	if prompt != "toml file" {
+		t.Errorf("prompt = %q, want TOML file when legacy env is disabled", prompt)
+	}
+}
+
+func TestLoadWithOptions_LegacyEnvFallback(t *testing.T) {
+	dir := t.TempDir()
+	envPath := filepath.Join(dir, "env-agent.txt")
+	if err := os.WriteFile(envPath, []byte("env file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tomlPath := filepath.Join(dir, "toml-agent.txt")
+	if err := os.WriteFile(tomlPath, []byte("toml file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("OR_AGENT_PROMPT_PATH", envPath)
+
+	prompt, err := LoadWithOptions(tomlPath, "", Options{UseLegacyEnv: true, LegacyEnvFallback: true})
+	if err != nil {
+		t.Fatalf("LoadWithOptions: %v", err)
+	}
+	if prompt != "toml file" {
+		t.Errorf("prompt = %q, want TOML file before legacy env fallback", prompt)
+	}
+}
