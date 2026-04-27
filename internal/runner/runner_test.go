@@ -108,6 +108,53 @@ func TestWaitHealthy_Timeout(t *testing.T) {
 	}
 }
 
+func TestPrecheckSendsDeterministicPrompt(t *testing.T) {
+	var gotPrompt string
+	var gotAgent string
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /session", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(sessionResponse{ID: "sess-precheck"})
+	})
+	mux.HandleFunc("POST /session/{id}/message", func(w http.ResponseWriter, req *http.Request) {
+		var mr messageRequest
+		if err := json.NewDecoder(req.Body).Decode(&mr); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if len(mr.Parts) > 0 {
+			gotPrompt = mr.Parts[0].Text
+		}
+		gotAgent = mr.Agent
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(messageResponse{
+			Info: messageInfo{ID: "msg-precheck"},
+			Parts: []messagePart{
+				{Type: "text", Text: "OK"},
+			},
+		})
+	})
+	mux.HandleFunc("DELETE /session/{id}", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	r := newTestRunner(config.OpenCodeConfig{Endpoint: srv.URL, Model: "test/model"})
+	if err := r.Precheck(context.Background(), "reviewer"); err != nil {
+		t.Fatalf("Precheck: %v", err)
+	}
+	if gotPrompt != precheckPrompt {
+		t.Errorf("prompt = %q, want %q", gotPrompt, precheckPrompt)
+	}
+	if gotAgent != "reviewer" {
+		t.Errorf("agent = %q, want reviewer", gotAgent)
+	}
+}
+
 // makeToolCallSSE produces a valid SSE payload for a submit_review tool result
 // in the real opencode format.
 func makeToolCallSSE(sessionID string, args any) string {
