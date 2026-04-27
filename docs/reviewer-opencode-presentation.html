@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OpenCode Reviewer — схема пайплайна и работы с OpenCode</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --panel: #121a33;
+      --panel-2: #0f152b;
+      --text: #e8ecff;
+      --muted: #b7c2f0;
+      --accent: #6ea8fe;
+      --accent-2: #7ef0c7;
+      --border: #2a3a73;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "Inter", "Segoe UI", Roboto, Arial, sans-serif;
+      background: linear-gradient(160deg, #060a16 0%, #0b1020 65%, #101832 100%);
+      color: var(--text);
+      line-height: 1.35;
+    }
+
+    .deck {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 24px;
+      display: grid;
+      gap: 22px;
+    }
+
+    .slide {
+      min-height: 88vh;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      background: radial-gradient(140% 100% at 100% 0%, #1a2550 0%, var(--panel) 45%, var(--panel-2) 100%);
+      padding: 34px;
+      box-shadow: 0 18px 60px rgba(0,0,0,.35);
+      display: grid;
+      grid-template-rows: auto auto 1fr auto;
+      gap: 18px;
+      page-break-after: always;
+    }
+
+    .slide:last-child { page-break-after: auto; }
+
+    h1, h2 { margin: 0; line-height: 1.15; }
+    h1 { font-size: 2.05rem; }
+    h2 { font-size: 1.62rem; color: #d9e2ff; }
+
+    .subtitle { color: var(--muted); font-size: 1.02rem; }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1.15fr 1fr;
+      gap: 18px;
+      align-items: start;
+    }
+
+    .card {
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px 16px;
+      background: rgba(12, 18, 40, 0.72);
+    }
+
+    .card h3 {
+      margin: 0 0 10px;
+      font-size: 1rem;
+      color: #d8f7ff;
+      letter-spacing: .01em;
+    }
+
+    .flow {
+      display: grid;
+      gap: 10px;
+    }
+
+    .node {
+      border: 1px solid #35509f;
+      border-radius: 10px;
+      padding: 10px 12px;
+      background: rgba(22, 33, 73, .55);
+    }
+
+    .node strong { color: #d8ebff; }
+
+    .arrow {
+      text-align: center;
+      color: var(--accent-2);
+      font-size: 1.15rem;
+      margin: -2px 0;
+    }
+
+    ul { margin: 0; padding-left: 18px; }
+    li { margin: 5px 0; color: #e3e9ff; }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 6px;
+    }
+
+    .badge {
+      border: 1px solid #4161c9;
+      color: #d7e2ff;
+      border-radius: 999px;
+      padding: 5px 10px;
+      font-size: .86rem;
+      background: rgba(38,58,124,.4);
+    }
+
+    .footer {
+      color: #9fb0e8;
+      font-size: .84rem;
+      border-top: 1px dashed #31498f;
+      padding-top: 10px;
+    }
+
+    @media (max-width: 980px) {
+      .slide { min-height: auto; }
+      .grid-2 { grid-template-columns: 1fr; }
+    }
+
+    @media print {
+      body { background: #fff; }
+      .slide {
+        min-height: 100vh;
+        box-shadow: none;
+        border-color: #999;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="deck">
+    <section class="slide" aria-label="Слайд 1: пайплайн ревьюера">
+      <header>
+        <h1>Схема пайплайна <span style="color: var(--accent)">opencode-reviewer</span></h1>
+      </header>
+      <p class="subtitle">Что происходит от запуска CLI до публикации комментариев в VCS.</p>
+
+      <div class="grid-2">
+        <div class="card">
+          <h3>Поток выполнения</h3>
+          <div class="flow">
+            <div class="node"><strong>1) CLI и конфиг</strong><br/>`cmd/reviewer/main.go`, `internal/config/*`<br/>Читает flags/env/TOML/.opencodereview, проверяет обязательные параметры.</div>
+            <div class="arrow">↓</div>
+            <div class="node"><strong>2) Git-данные</strong><br/>`internal/git/*`<br/>Fetch ветки, определение base/head, сбор сырых diff и commit-метаданных.</div>
+            <div class="arrow">↓</div>
+            <div class="node"><strong>3) Обработка diff</strong><br/>`internal/diff/*`<br/>Парсинг патча, фильтрация бинарных/нерелевантных изменений, подготовка контекста файлов.</div>
+            <div class="arrow">↓</div>
+            <div class="node"><strong>4) Оркестрация pipeline</strong><br/>`internal/pipeline/*`<br/>Запуск N reviewer-сессий параллельно + запуск finalizer-сессии для дедупликации.</div>
+            <div class="arrow">↓</div>
+            <div class="node"><strong>5) Публикация результата</strong><br/>`internal/vcs/*`, `internal/vcs/gitlab/*`<br/>Нормализация line-refs, формат Markdown и отправка комментариев в GitLab MR.</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Какая часть за что отвечает</h3>
+          <ul>
+            <li><strong>internal/config</strong> — единая модель конфигурации и приоритеты источников (CLI &gt; ENV &gt; TOML).</li>
+            <li><strong>internal/configdir</strong> — загрузка структуры `.opencodereview` (provider, prompts, tools).</li>
+            <li><strong>internal/agentconfig</strong>, <strong>providerconfig</strong>, <strong>subagentconfig</strong> — резолв prompt/provider/sub-agent конфигов.</li>
+            <li><strong>internal/workspace</strong> — временная рабочая директория для артефактов сессий.</li>
+            <li><strong>internal/runner</strong> — управление жизненным циклом OpenCode (`serve`/`run`).</li>
+            <li><strong>internal/pipeline</strong> — бизнес-логика стадий review и финализации.</li>
+            <li><strong>internal/vcs</strong> — абстракция публикации замечаний + форматирование.</li>
+            <li><strong>internal/vcs/gitlab</strong> — конкретный адаптер GitLab API.</li>
+          </ul>
+          <div class="legend">
+            <span class="badge">Вход: branch + config</span>
+            <span class="badge">Выход: consolidated review</span>
+            <span class="badge">Режим: parallel reviewers + finalizer</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="footer">Слайд 1/2 · Логика оркестрации ревьюера</div>
+    </section>
+
+    <section class="slide" aria-label="Слайд 2: работа с OpenCode">
+      <header>
+        <h2>Схема работы с <span style="color: var(--accent-2)">OpenCode</span></h2>
+      </header>
+      <p class="subtitle">Как reviewer формирует контекст, запускает LLM-сессии и получает итоговый Markdown-ревью.</p>
+
+      <div class="grid-2">
+        <div class="card">
+          <h3>Интеграционный цикл OpenCode</h3>
+          <div class="flow">
+            <div class="node"><strong>A) Подготовка контекста</strong><br/>Diff и метаданные кладутся во временный workspace (`.opencode-review/diff.md`).</div>
+            <div class="arrow">→</div>
+            <div class="node"><strong>B) Инициализация OpenCode</strong><br/>`internal/runner` проверяет endpoint/порт, поднимает subprocess при необходимости.</div>
+            <div class="arrow">→</div>
+            <div class="node"><strong>C) Reviewer-этап</strong><br/>Для каждого файла из `reviewer/messages/*.md` стартует отдельная сессия OpenCode (параллельно).</div>
+            <div class="arrow">→</div>
+            <div class="node"><strong>D) Finalizer-этап</strong><br/>Одна сессия собирает вывод reviewer-ов, удаляет дубли, выстраивает финальный список находок.</div>
+            <div class="arrow">→</div>
+            <div class="node"><strong>E) Публикация и трассировка</strong><br/>Результат маппится на строки diff и отправляется в VCS-паблишер.</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Контракты и ответственность слоёв</h3>
+          <ul>
+            <li><strong>OpenCode provider.json</strong> определяет модель/провайдера LLM и auth-настройки.</li>
+            <li><strong>Prompts</strong> разделены на роли: reviewer (поиск проблем) и finalizer (сведение/приоритизация).</li>
+            <li><strong>Tools в `.opencodereview`</strong> позволяют переопределять built-in инструменты отправки review.</li>
+            <li><strong>stage_timeout / max_steps</strong> ограничивают время и глубину каждой сессии.</li>
+            <li><strong>Fast-review режим</strong> позволяет воспроизвести финальный результат из JSON-дампа без повторного запуска LLM.</li>
+            <li><strong>Fallback-логика конфигов</strong>: приоритет config-dir, затем TOML/env (legacy-пути только как fallback).</li>
+          </ul>
+
+          <h3 style="margin-top: 14px;">Практическая ментальная модель</h3>
+          <ul>
+            <li><strong>Reviewer = генерация кандидатов замечаний.</strong></li>
+            <li><strong>Finalizer = редактор качества и дедупликации.</strong></li>
+            <li><strong>VCS publisher = доставка в инженерный workflow команды.</strong></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="footer">Слайд 2/2 · OpenCode как движок агентных стадий</div>
+    </section>
+  </main>
+</body>
+</html>
