@@ -34,6 +34,7 @@ const (
 	// If it expires, the attempt is treated as a miss and triggers a retry.
 	toolCallWaitTimeout = 3 * time.Second
 	precheckTimeout     = 3 * time.Minute
+	precheckPrompt      = "Health check. Reply with exactly: OK\nDo not use tools. Do not add explanations or markdown."
 )
 
 // Runner manages an opencode serve subprocess and HTTP interaction.
@@ -167,11 +168,11 @@ func (r *Runner) run(ctx context.Context, req RunRequest, out chan<- RunEvent) {
 	s.execute(ctx)
 }
 
-// Precheck creates a throwaway session, sends "ping" and verifies
-// that the server responds with text. It is intended to be called
+// Precheck creates a throwaway session, sends a minimal deterministic prompt
+// and verifies that the server responds with text. It is intended to be called
 // right after StartServe to fail fast before real review sessions.
-func (r *Runner) Precheck(ctx context.Context) error {
-	slog.Info("running precheck")
+func (r *Runner) Precheck(ctx context.Context, agentName string) error {
+	slog.Info("running precheck", "agent", sanitizeLogValue(agentName, 128))
 
 	ctx, cancel := context.WithTimeout(ctx, precheckTimeout)
 	defer cancel()
@@ -182,7 +183,7 @@ func (r *Runner) Precheck(ctx context.Context) error {
 	}
 	defer r.cleanupSession(sessionID)
 
-	resp, err := r.sendMessage(ctx, sessionID, RunRequest{Prompt: "ping"})
+	resp, err := r.sendMessage(ctx, sessionID, RunRequest{Prompt: precheckPrompt, AgentName: agentName})
 	if err != nil {
 		return fmt.Errorf("send message: %w", err)
 	}

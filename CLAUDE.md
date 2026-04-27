@@ -113,6 +113,7 @@ The numeric ID corresponds to the task identifier.
 ## Commands
 
 Use `NO_PROXY="*"` only for commands that make network calls (downloading dependencies, HTTP requests, git fetch/push). Local build/test/lint commands do **not** need it.
+Local full review runs (`opencode-reviewer ...` and `go run ./cmd/reviewer ...`) must use `NO_PROXY="*"`.
 
 ```bash
 NO_PROXY="*" go mod tidy

@@ -34,7 +34,7 @@ func (s *ReviewStage) Run(ctx context.Context) ([]*models.ReviewResult, []runner
 		return nil, nil, fmt.Errorf("start reviewer serve: %w", err)
 	}
 	defer s.runner.StopServe()
-	if err := s.runner.Precheck(ctx); err != nil {
+	if err := s.runner.Precheck(ctx, "reviewer"); err != nil {
 		return nil, nil, fmt.Errorf("reviewer precheck: %w", err)
 	}
 	results, stats := s.runAllReviews(ctx)

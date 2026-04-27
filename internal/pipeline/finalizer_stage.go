@@ -31,7 +31,7 @@ func (s *FinalizerStage) Run(ctx context.Context, phase1Results []*models.Review
 		return nil, runner.SessionStats{}, fmt.Errorf("start finalizer serve: %w", err)
 	}
 	defer s.runner.StopServe()
-	if err := s.runner.Precheck(ctx); err != nil {
+	if err := s.runner.Precheck(ctx, "finalizer"); err != nil {
 		return nil, runner.SessionStats{}, fmt.Errorf("finalizer precheck: %w", err)
 	}
 	return s.runFinalizerReview(ctx, phase1Results)
