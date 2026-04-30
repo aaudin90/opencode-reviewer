@@ -4,11 +4,11 @@ Automated code review pipeline powered by [OpenCode](https://opencode.ai). It ru
 
 ## How It Works
 
-1. Fetches the target branch and builds a diff against the base branch.
-2. Writes the diff into a temporary workspace (`.opencode-review/diff.md`).
-3. Starts one or more reviewer sessions in parallel, one per reviewer message.
-4. Starts a finalizer session that deduplicates and merges findings.
-5. Publishes the final review through the configured VCS publisher.
+1. Fetches and checks out the target branch.
+2. Resolves file-based configuration from the checked-out branch.
+3. Builds a diff against the base branch and writes it to `.opencode-review/diff.md`.
+4. Starts one or more reviewer sessions in parallel, one per reviewer message.
+5. Starts a finalizer session and publishes the final review through the configured VCS publisher.
 
 ## Prerequisites
 
@@ -32,7 +32,7 @@ The primary configuration path is a project-local `.opencodereview` directory.
 ./build/opencode-reviewer --config-dir /path/to/repo/.opencodereview --branch my-feature-branch
 ```
 
-If `--config-dir` and `OR_CONFIG_DIR` are not set, the reviewer auto-discovers `.opencodereview` in `project_dir`, or in the current working directory when `project_dir` is not known yet.
+If `--config-dir` and `OR_CONFIG_DIR` are not set, the reviewer auto-discovers `.opencodereview` in `project_dir` after checking out the target branch, or in the current working directory when `project_dir` is not known yet.
 
 For local development with the legacy TOML example:
 
@@ -51,12 +51,14 @@ Full CLI help is available with:
 
 `.opencodereview` is the main and highest-priority way to configure review prompts and provider files. The older env-based provider/prompt configuration is deprecated and remains only as a fallback when config-dir mode is inactive.
 
+File-based configuration is read after the target branch is prepared, so `reviewer/messages/*.md` can be supplied by the branch under review.
+
 Config directory priority:
 
 ```text
 --config-dir flag
   > OR_CONFIG_DIR env
-  > <project_dir or cwd>/.opencodereview auto-discovery
+  > <project_dir or cwd>/.opencodereview auto-discovery after checkout
 ```
 
 Recommended structure:
@@ -136,7 +138,7 @@ Common flags:
 
 | Flag | Description |
 |---|---|
-| `--config-dir DIR` | Use a config directory explicitly |
+| `--config-dir DIR` | Use a config directory explicitly; files are read after checkout |
 | `--config FILE` | Use a TOML config explicitly |
 | `--branch BRANCH` | Branch to review; overrides `OR_BRANCH` and `git.branch` |
 | `--review-dump FILE` | Save final review JSON for debugging |
@@ -146,7 +148,7 @@ Common env vars:
 
 | Variable | Description |
 |---|---|
-| `OR_CONFIG_DIR` | Config directory used when `--config-dir` is not set |
+| `OR_CONFIG_DIR` | Config directory used after checkout when `--config-dir` is not set |
 | `OR_DISABLE_CONFIG_DIR_AUTO_DISCOVERY` | Disable `.opencodereview` auto-discovery with `true` or `1` |
 | `OR_PROJECT_DIR` | Project repository path |
 | `OR_BRANCH` | Branch to review |

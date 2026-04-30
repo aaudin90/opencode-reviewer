@@ -34,6 +34,7 @@ type Config struct {
 	FinalizerRunner  *runner.Runner
 	Messages         []string      // reviewer message contents
 	FinalizerMessage string        // finalizer user message
+	RuntimeLoader    RuntimeLoader // optional; lazily creates LLM runtime after checkout
 	Publisher        vcs.Publisher // optional; nil = skip publishing
 	ReviewDumpPath   string        // if set, save writtenReview as JSON after LLM pipeline
 	FastReviewPath   string        // if set, skip LLM stages and load review from this file
@@ -45,6 +46,8 @@ type Pipeline struct {
 	baseBranch     string
 	reviewStage    *ReviewStage
 	finalizerStage *FinalizerStage
+	runtimeLoader  RuntimeLoader
+	runtimeCleanup func() error
 	publisher      vcs.Publisher
 	diffResult     *diff.Result // set by prepareDiff, used for normalization
 	reviewDumpPath string
@@ -52,26 +55,30 @@ type Pipeline struct {
 }
 
 func New(cfg Config) *Pipeline {
-	return &Pipeline{
-		gitClient:  cfg.GitClient,
-		branch:     cfg.Branch,
-		baseBranch: cfg.BaseBranch,
-		reviewStage: NewReviewStage(ReviewStageConfig{
-			Runner:   cfg.Runner,
-			Messages: cfg.Messages,
-		}),
-		finalizerStage: NewFinalizerStage(FinalizerStageConfig{
-			Runner:           cfg.FinalizerRunner,
-			FinalizerMessage: cfg.FinalizerMessage,
-		}),
+	p := &Pipeline{
+		gitClient:      cfg.GitClient,
+		branch:         cfg.Branch,
+		baseBranch:     cfg.BaseBranch,
+		runtimeLoader:  cfg.RuntimeLoader,
 		publisher:      cfg.Publisher,
 		reviewDumpPath: cfg.ReviewDumpPath,
 		fastReviewPath: cfg.FastReviewPath,
 	}
+	if cfg.Runner != nil || cfg.FinalizerRunner != nil || cfg.Messages != nil || cfg.FinalizerMessage != "" {
+		p.reviewStage = NewReviewStage(ReviewStageConfig{
+			Runner:   cfg.Runner,
+			Messages: cfg.Messages,
+		})
+		p.finalizerStage = NewFinalizerStage(FinalizerStageConfig{
+			Runner:           cfg.FinalizerRunner,
+			FinalizerMessage: cfg.FinalizerMessage,
+		})
+	}
+	return p
 }
 
 func (p *Pipeline) Run(ctx context.Context) (*models.FinalReview, error) {
-	if err := p.prepareBranch(); err != nil {
+	if err := p.PrepareRepository(); err != nil {
 		return nil, fmt.Errorf("prepare branch: %w", err)
 	}
 	slog.Info("repository prepared for review")
@@ -81,6 +88,10 @@ func (p *Pipeline) Run(ctx context.Context) (*models.FinalReview, error) {
 		}
 	}()
 
+	return p.RunPrepared(ctx)
+}
+
+func (p *Pipeline) RunPrepared(ctx context.Context) (*models.FinalReview, error) {
 	diffPath, err := p.prepareDiff()
 	if err != nil {
 		return nil, fmt.Errorf("prepare diff: %w", err)
@@ -96,6 +107,11 @@ func (p *Pipeline) Run(ctx context.Context) (*models.FinalReview, error) {
 		p.publishReview(ctx, writtenReview)
 		return writtenReview, nil
 	}
+
+	if err := p.ensureRuntime(ctx); err != nil {
+		return nil, fmt.Errorf("load runtime: %w", err)
+	}
+	defer p.cleanupRuntime()
 
 	if err := p.swapAgentsMD(); err != nil {
 		return nil, fmt.Errorf("swap agents.md: %w", err)
@@ -130,6 +146,45 @@ func (p *Pipeline) Run(ctx context.Context) (*models.FinalReview, error) {
 	p.logTotalStats(phase1Stats, finalizerStats, len(phase1Stats)+1) // +1 for finalizer session
 
 	return writtenReview, nil
+}
+
+func (p *Pipeline) ensureRuntime(ctx context.Context) error {
+	if p.reviewStage != nil && p.finalizerStage != nil {
+		return nil
+	}
+	if p.runtimeLoader == nil {
+		return fmt.Errorf("runtime loader is not configured")
+	}
+
+	resources, err := p.runtimeLoader.LoadRuntime(ctx)
+	if err != nil {
+		return err
+	}
+	if resources == nil {
+		return fmt.Errorf("runtime loader returned nil resources")
+	}
+
+	p.reviewStage = NewReviewStage(ReviewStageConfig{
+		Runner:   resources.ReviewerRunner,
+		Messages: resources.Messages,
+	})
+	p.finalizerStage = NewFinalizerStage(FinalizerStageConfig{
+		Runner:           resources.FinalizerRunner,
+		FinalizerMessage: resources.FinalizerMessage,
+	})
+	p.runtimeCleanup = resources.Cleanup
+
+	return nil
+}
+
+func (p *Pipeline) cleanupRuntime() {
+	if p.runtimeCleanup == nil {
+		return
+	}
+	if err := p.runtimeCleanup(); err != nil {
+		slog.Error("failed to cleanup runtime", "error", err)
+	}
+	p.runtimeCleanup = nil
 }
 
 func (p *Pipeline) publishReview(ctx context.Context, review *models.FinalReview) {
@@ -232,23 +287,27 @@ func (p *Pipeline) loadReview(path string) (*models.FinalReview, error) {
 	}, nil
 }
 
-func (p *Pipeline) prepareBranch() error {
+func (p *Pipeline) PrepareRepository() error {
+	return PrepareRepository(p.gitClient, p.branch)
+}
+
+func PrepareRepository(gitClient *git.Client, branch string) error {
 	slog.Info("fetching remote")
-	if err := p.gitClient.Fetch(); err != nil {
+	if err := gitClient.Fetch(); err != nil {
 		return fmt.Errorf("fetch: %w", err)
 	}
 
 	slog.Info("cleaning working tree")
-	if err := p.gitClient.Clean(); err != nil {
+	if err := gitClient.Clean(); err != nil {
 		return fmt.Errorf("clean: %w", err)
 	}
 
-	slog.Info("checking out branch", "branch", p.branch)
-	if err := p.gitClient.Checkout(p.branch); err != nil {
+	slog.Info("checking out branch", "branch", branch)
+	if err := gitClient.Checkout(branch); err != nil {
 		return fmt.Errorf("checkout: %w", err)
 	}
 
-	slog.Info("project directory ready", "size_mb", dirSizeMB(p.gitClient.Dir()))
+	slog.Info("project directory ready", "size_mb", dirSizeMB(gitClient.Dir()))
 	return nil
 }
 
