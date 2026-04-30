@@ -10,24 +10,17 @@ import (
 
 	"github.com/alecthomas/kong"
 
-	"github.com/aaudin90/opencode-reviewer/internal/agentconfig"
 	"github.com/aaudin90/opencode-reviewer/internal/config"
-	"github.com/aaudin90/opencode-reviewer/internal/configdir"
-	"github.com/aaudin90/opencode-reviewer/internal/finalizerconfig"
 	"github.com/aaudin90/opencode-reviewer/internal/git"
 	"github.com/aaudin90/opencode-reviewer/internal/pipeline"
-	"github.com/aaudin90/opencode-reviewer/internal/promptconfig"
-	"github.com/aaudin90/opencode-reviewer/internal/providerconfig"
-	"github.com/aaudin90/opencode-reviewer/internal/runner"
-	"github.com/aaudin90/opencode-reviewer/internal/subagentconfig"
+	"github.com/aaudin90/opencode-reviewer/internal/reviewruntime"
 	"github.com/aaudin90/opencode-reviewer/internal/vcs"
 	gitlabvcs "github.com/aaudin90/opencode-reviewer/internal/vcs/gitlab"
-	"github.com/aaudin90/opencode-reviewer/internal/workspace"
 )
 
 type CLI struct {
 	Config                        string `kong:"optional,type='path',placeholder='FILE',help='Path to TOML config file. If omitted, config-dir defaults or environment fallbacks are used.'"`
-	ConfigDir                     string `kong:"optional,name='config-dir',type='path',placeholder='DIR',help='Path to config directory. If omitted, OR_CONFIG_DIR is used, then <project_dir or cwd>/.opencodereview auto-discovery.'"`
+	ConfigDir                     string `kong:"optional,name='config-dir',type='path',placeholder='DIR',help='Path to config directory. If omitted, OR_CONFIG_DIR is used, then <project_dir or cwd>/.opencodereview auto-discovery after checkout.'"`
 	DisableConfigDirAutoDiscovery bool   `kong:"optional,name='disable-config-dir-auto-discovery',help='Disable only the fallback auto-discovery of <project_dir or cwd>/.opencodereview. --config-dir and OR_CONFIG_DIR still work.'"`
 	Branch                        string `kong:"placeholder='BRANCH',help='Branch to review (overrides OR_BRANCH env).'"`
 	ReviewDump                    string `kong:"optional,name='review-dump',type='path',placeholder='FILE',help='Save final review JSON to FILE (for fast-path debugging).'"`
@@ -42,6 +35,7 @@ func main() {
 		kong.Description(`Automated code review pipeline powered by OpenCode.
 
 Use --config-dir/OR_CONFIG_DIR for file-based configuration, or --config for a TOML file.
+File-based configuration is resolved after the target branch is checked out.
 Environment variables still override scalar TOML settings; provider and prompt env vars are deprecated fallbacks.
 
 Config file (TOML) sections:
@@ -89,7 +83,7 @@ Config file (TOML) sections:
     clear_comments            Delete open unanswered discussions before posting (default: false)
 
 Environment variables:
-  OR_CONFIG_DIR               Path to config directory (used by --config-dir flow and auto-default files)
+  OR_CONFIG_DIR               Path to config directory (used after checkout when --config-dir is not set)
   OR_DISABLE_CONFIG_DIR_AUTO_DISCOVERY  Disable only <project_dir or cwd>/.opencodereview fallback auto-discovery (true/1)
   OR_PROJECT_DIR               Path to the project repository (overrides project_dir)
   OR_BRANCH                    Branch to review (overridden by --branch flag)
@@ -135,7 +129,7 @@ Debug flags:
   --disable-config-dir-auto-discovery
                         Disable only <project_dir or cwd>/.opencodereview fallback auto-discovery.
 
-Priority (config directory):  --config-dir flag > OR_CONFIG_DIR env > <project_dir or cwd>/.opencodereview (if exists and auto-discovery is enabled).
+Priority (config directory):  --config-dir flag > OR_CONFIG_DIR env > <project_dir or cwd>/.opencodereview after checkout (if exists and auto-discovery is enabled).
 Priority (branch):            --branch flag > OR_BRANCH env > git.branch TOML.
 Priority (config files/prompts): config-dir files > TOML inline/path > deprecated OR_* env fallback (only when config-dir is inactive) > built-in default.`),
 	)
@@ -162,13 +156,6 @@ Priority (config files/prompts): config-dir files > TOML inline/path > deprecate
 	applyEnv(cfg.Env)
 	config.ApplyEnvOverrides(cfg)
 
-	disableAutoDiscovery := cli.DisableConfigDirAutoDiscovery || envBool("OR_DISABLE_CONFIG_DIR_AUTO_DISCOVERY")
-	effectiveConfigDir, configSource, err := configdir.Resolve(cli.ConfigDir, os.Getenv("OR_CONFIG_DIR"), cfg.ProjectDir, disableAutoDiscovery)
-	if err != nil {
-		slog.Error("failed to resolve config directory", "error", err)
-		os.Exit(1)
-	}
-
 	warnDeprecatedConfigEnv()
 
 	if cli.Branch != "" {
@@ -182,133 +169,7 @@ Priority (config files/prompts): config-dir files > TOML inline/path > deprecate
 
 	initSlog()
 
-	slog.Info("resolved configuration directory", "config_dir", effectiveConfigDir, "source", configSource) // #nosec G706 -- local path and controlled source label
-
-	if err := config.ApplyConfigDirDefaults(cfg, effectiveConfigDir); err != nil {
-		slog.Error("failed to apply config directory defaults", "error", err)
-		os.Exit(1)
-	}
-
-	useLegacyEnvConfig := effectiveConfigDir == ""
-	resolutionBaseDir := configBaseDir
-
-	providerPath := resolveRelativePath(resolutionBaseDir, cfg.OpenCode.ProviderConfigPath)
-	providerJSON, err := providerconfig.LoadWithOptions(providerPath, providerconfig.Options{
-		UseLegacyEnv:      useLegacyEnvConfig,
-		LegacyEnvFallback: useLegacyEnvConfig,
-	})
-	if err != nil {
-		slog.Error("failed to load provider config", "error", err)
-		os.Exit(1)
-	}
-
-	agentPath := resolveRelativePath(resolutionBaseDir, cfg.Pipeline.ReviewAgentPromptPath)
-	agentPrompt, err := agentconfig.LoadWithOptions(agentPath, cfg.Pipeline.ReviewAgentPrompt, agentconfig.Options{
-		UseLegacyEnv:      useLegacyEnvConfig,
-		LegacyEnvFallback: useLegacyEnvConfig,
-	})
-	if err != nil {
-		slog.Error("failed to load agent prompt", "error", err)
-		os.Exit(1)
-	}
-
-	finalizerPath := resolveRelativePath(resolutionBaseDir, cfg.Pipeline.FinalizerPromptPath)
-	finalizerPrompt, err := finalizerconfig.LoadWithOptions(finalizerPath, cfg.Pipeline.FinalizerPrompt, finalizerconfig.Options{
-		UseLegacyEnv:      useLegacyEnvConfig,
-		LegacyEnvFallback: useLegacyEnvConfig,
-	})
-	if err != nil {
-		slog.Error("failed to load finalizer prompt", "error", err)
-		os.Exit(1)
-	}
-
-	messages, err := promptconfig.LoadWithOptions(resolutionBaseDir, cfg.Pipeline.ReviewMessagePaths, cfg.Pipeline.ReviewMessages, promptconfig.Options{
-		UseLegacyEnv:      useLegacyEnvConfig,
-		LegacyEnvFallback: useLegacyEnvConfig,
-	})
-	if err != nil {
-		slog.Error("failed to load review messages", "error", err)
-		os.Exit(1)
-	}
-
-	reviewSubAgents, err := subagentconfig.LoadWithOptions(
-		"OR_REVIEW_SUB_AGENT_PROMPT_PATHS", "reviewer",
-		resolutionBaseDir,
-		cfg.Pipeline.ReviewSubAgentPromptPaths,
-		cfg.Pipeline.ReviewSubAgentPrompts,
-		subagentconfig.Options{UseLegacyEnv: useLegacyEnvConfig, LegacyEnvFallback: useLegacyEnvConfig},
-	)
-	if err != nil {
-		slog.Error("failed to load reviewer sub-agent prompts", "error", err)
-		os.Exit(1)
-	}
-
-	finalizerMsgPath := resolveRelativePath(resolutionBaseDir, cfg.Pipeline.FinalizerMessagePath)
-	finalizerMessage, err := finalizerconfig.LoadMessageWithOptions(finalizerMsgPath, cfg.Pipeline.FinalizerMessage, finalizerconfig.Options{
-		UseLegacyEnv:      useLegacyEnvConfig,
-		LegacyEnvFallback: useLegacyEnvConfig,
-	})
-	if err != nil {
-		slog.Error("failed to load finalizer message", "error", err)
-		os.Exit(1)
-	}
-
-	finalizerSubAgents, err := subagentconfig.LoadWithOptions(
-		"OR_FINALIZER_SUB_AGENT_PROMPT_PATHS", "finalizer",
-		resolutionBaseDir,
-		cfg.Pipeline.FinalizerSubAgentPromptPaths,
-		cfg.Pipeline.FinalizerSubAgentPrompts,
-		subagentconfig.Options{UseLegacyEnv: useLegacyEnvConfig, LegacyEnvFallback: useLegacyEnvConfig},
-	)
-	if err != nil {
-		slog.Error("failed to load finalizer sub-agent prompts", "error", err)
-		os.Exit(1)
-	}
-
-	reviewerTools, err := loadConfigDirToolOverrides(effectiveConfigDir, "reviewer")
-	if err != nil {
-		slog.Error("failed to load reviewer tools", "error", err)
-		os.Exit(1)
-	}
-
-	finalizerTools, err := loadConfigDirToolOverrides(effectiveConfigDir, "finalizer")
-	if err != nil {
-		slog.Error("failed to load finalizer tools", "error", err)
-		os.Exit(1)
-	}
-
-	reviewerWS, err := workspace.NewReviewer(workspace.Config{
-		ProviderJSON:  providerJSON,
-		Model:         cfg.OpenCode.Model,
-		MaxSteps:      cfg.OpenCode.MaxSteps,
-		SubAgents:     reviewSubAgents,
-		ToolOverrides: reviewerTools,
-	}, agentPrompt)
-	if err != nil {
-		slog.Error("failed to create reviewer workspace", "error", err)
-		os.Exit(1)
-	}
-	defer func() { _ = reviewerWS.Cleanup() }()
-
-	finalizerWS, err := workspace.NewFinalizer(workspace.Config{
-		ProviderJSON:  providerJSON,
-		Model:         cfg.OpenCode.Model,
-		MaxSteps:      cfg.OpenCode.MaxSteps,
-		SubAgents:     finalizerSubAgents,
-		ToolOverrides: finalizerTools,
-	}, finalizerPrompt)
-	if err != nil {
-		slog.Error("failed to create finalizer workspace", "error", err)
-		os.Exit(1)
-	}
-	defer func() { _ = finalizerWS.Cleanup() }()
-
-	if err := runner.ValidateBinary(cfg.OpenCode); err != nil {
-		slog.Error("opencode is not available", "error", err)
-		os.Exit(1)
-	}
-
-	if err := run(cfg, reviewerWS, finalizerWS, messages, finalizerMessage, cli.ReviewDump, cli.FastReview); err != nil {
+	if err := run(cfg, cli, configBaseDir); err != nil {
 		slog.Error("review failed", "error", err)
 		os.Exit(1)
 	}
@@ -329,7 +190,7 @@ func buildPublisher(cfg *config.Config) vcs.Publisher {
 	return gitlabvcs.NewPublisher(client, gl.ClearComments)
 }
 
-func run(cfg *config.Config, reviewerWS, finalizerWS *workspace.Workspace, messages []string, finalizerMessage string, reviewDump, fastReview string) error {
+func run(cfg *config.Config, cli CLI, configBaseDir string) error {
 	projectDir, err := filepath.Abs(cfg.ProjectDir)
 	if err != nil {
 		return fmt.Errorf("resolve project dir: %w", err)
@@ -342,22 +203,22 @@ func run(cfg *config.Config, reviewerWS, finalizerWS *workspace.Workspace, messa
 	)
 
 	gitClient := git.NewClient(projectDir, cfg.Git.Remote)
-	reviewerRunner := runner.New(cfg.OpenCode, projectDir, reviewerWS)
-	finalizerRunner := runner.New(cfg.OpenCode, projectDir, finalizerWS)
-
 	publisher := buildPublisher(cfg)
+	runtimeLoader := reviewruntime.New(reviewruntime.Config{
+		AppConfig:                     cfg,
+		ConfigBaseDir:                 configBaseDir,
+		CLIConfigDir:                  cli.ConfigDir,
+		DisableConfigDirAutoDiscovery: cli.DisableConfigDirAutoDiscovery || envBool("OR_DISABLE_CONFIG_DIR_AUTO_DISCOVERY"),
+	})
 
 	p := pipeline.New(pipeline.Config{
-		GitClient:        gitClient,
-		Branch:           cfg.Git.Branch,
-		BaseBranch:       cfg.Git.BaseBranch,
-		Runner:           reviewerRunner,
-		FinalizerRunner:  finalizerRunner,
-		Messages:         messages,
-		FinalizerMessage: finalizerMessage,
-		Publisher:        publisher,
-		ReviewDumpPath:   reviewDump,
-		FastReviewPath:   fastReview,
+		GitClient:      gitClient,
+		Branch:         cfg.Git.Branch,
+		BaseBranch:     cfg.Git.BaseBranch,
+		RuntimeLoader:  runtimeLoader,
+		Publisher:      publisher,
+		ReviewDumpPath: cli.ReviewDump,
+		FastReviewPath: cli.FastReview,
 	})
 
 	ctx := context.Background()
@@ -426,16 +287,4 @@ func applyEnv(env map[string]string) {
 			}
 		}
 	}
-}
-
-// resolveRelativePath resolves a path relative to baseDir if it is not absolute.
-// Returns empty string if path is empty.
-func resolveRelativePath(baseDir, path string) string {
-	if path == "" {
-		return ""
-	}
-	if filepath.IsAbs(path) {
-		return path
-	}
-	return filepath.Join(baseDir, path)
 }
