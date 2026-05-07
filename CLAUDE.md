@@ -153,6 +153,7 @@ Whenever CLI flags or environment variables are added, removed, or changed — i
 
 ## File Structure
 
+- Keep code isolated by default: do not export types, functions, methods, or fields unless another package genuinely needs them.
 - One type per file: each struct/interface gets its own `.go` file with all its methods
 - The "main" type of a package stays in the primary file (e.g., `Runner` in `runner.go`)
 - Supporting types go into separate files named after the type (e.g., `RunRequest` → `request.go`)
