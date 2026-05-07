@@ -24,6 +24,8 @@ make build
 
 The binaries are written to `build/opencode-reviewer` and `build/opencode-reviewer-comment-warrior`.
 
+The Docker base image contains both CLIs in `PATH`: `opencode-reviewer` and `opencode-reviewer-comment-warrior`.
+
 ## Quick Start
 
 The primary configuration path is a project-local `.opencodereview` directory.
@@ -51,6 +53,12 @@ Comment-warrior handles existing GitLab discussions after the branch is checked 
 
 ```bash
 ./build/opencode-reviewer-comment-warrior --config ./configs/dev.toml --mr-iid 123 --dry-run
+```
+
+Example CI command:
+
+```bash
+opencode-reviewer-comment-warrior --branch "${CI_MERGE_REQUEST_SOURCE_BRANCH_NAME}" --mr-iid "${CI_MERGE_REQUEST_IID}"
 ```
 
 ## `.opencodereview`
