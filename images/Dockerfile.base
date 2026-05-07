@@ -7,6 +7,7 @@ RUN go mod download
 
 COPY . .
 RUN CGO_ENABLED=0 go build -o /app/build/opencode-reviewer ./cmd/reviewer
+RUN CGO_ENABLED=0 go build -o /app/build/opencode-reviewer-comment-warrior ./cmd/comment-warrior
 
 FROM almalinux:9-minimal
 
@@ -23,6 +24,7 @@ RUN case "${TARGETARCH}" in \
   chmod +x /usr/local/bin/opencode
 
 COPY --from=builder /app/build/opencode-reviewer /usr/local/bin/opencode-reviewer
+COPY --from=builder /app/build/opencode-reviewer-comment-warrior /usr/local/bin/opencode-reviewer-comment-warrior
 
 ENV OPENCODE_DISABLE_AUTOUPDATE=true \
     OPENCODE_DISABLE_MODELS_FETCH=true \

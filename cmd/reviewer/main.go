@@ -10,12 +10,12 @@ import (
 
 	"github.com/alecthomas/kong"
 
-	"github.com/aaudin90/opencode-reviewer/internal/config"
-	"github.com/aaudin90/opencode-reviewer/internal/git"
-	"github.com/aaudin90/opencode-reviewer/internal/pipeline"
-	"github.com/aaudin90/opencode-reviewer/internal/reviewruntime"
-	"github.com/aaudin90/opencode-reviewer/internal/vcs"
-	gitlabvcs "github.com/aaudin90/opencode-reviewer/internal/vcs/gitlab"
+	"github.com/aaudin90/opencode-reviewer/internal/review/pipeline"
+	reviewruntime "github.com/aaudin90/opencode-reviewer/internal/review/runtime"
+	"github.com/aaudin90/opencode-reviewer/internal/shared/config"
+	"github.com/aaudin90/opencode-reviewer/internal/shared/git"
+	"github.com/aaudin90/opencode-reviewer/internal/shared/vcs"
+	gitlabvcs "github.com/aaudin90/opencode-reviewer/internal/shared/vcs/gitlab"
 )
 
 type CLI struct {

@@ -6,7 +6,7 @@
 |--------|-------------|
 | `dev-config` | Creates `configs/dev.toml` from `configs/example.toml` if it doesn't exist |
 | `run` | Runs the reviewer with dev config (depends on `dev-config`) |
-| `build` | Builds binary to `./build/opencode-reviewer` |
+| `build` | Builds binaries to `./build/opencode-reviewer` and `./build/opencode-reviewer-comment-warrior` |
 | `review` | Builds and runs review on a branch: `make review BRANCH=feature-branch` |
 | `test` | Runs all tests with race detector and coverage |
 | `linter` | Runs gofmt check and golangci-lint |

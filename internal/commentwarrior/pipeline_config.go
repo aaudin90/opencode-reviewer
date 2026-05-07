@@ -1,0 +1,11 @@
+package commentwarrior
+
+type PipelineConfig struct {
+	ProjectDir     string
+	Branch         string
+	BaseBranch     string
+	MRIID          int
+	DryRun         bool
+	MaxDiscussions int
+	DiscussionID   string
+}

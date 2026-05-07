@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/aaudin90/opencode-reviewer/internal/models"
+	"github.com/aaudin90/opencode-reviewer/internal/shared/models"
 )
 
 func TestParseFinalToolArgs_FindingsWrongType(t *testing.T) {
