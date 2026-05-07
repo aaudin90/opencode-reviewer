@@ -1,6 +1,8 @@
 BINARY := opencode-reviewer
+COMMENT_WARRIOR_BINARY := opencode-reviewer-comment-warrior
 BUILD_DIR := ./build
 MAIN := ./cmd/reviewer
+COMMENT_WARRIOR_MAIN := ./cmd/comment-warrior
 export GOTOOLCHAIN := go1.26.2
 
 .PHONY: dev-config run build review test linter tools deps clean
@@ -13,6 +15,7 @@ run: dev-config
 
 build:
 	@go build -o $(BUILD_DIR)/$(BINARY) $(MAIN)
+	@go build -o $(BUILD_DIR)/$(COMMENT_WARRIOR_BINARY) $(COMMENT_WARRIOR_MAIN)
 
 review: build
 	$(BUILD_DIR)/$(BINARY) --config ./configs/dev.toml --branch $(BRANCH)

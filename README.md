@@ -22,7 +22,7 @@ Automated code review pipeline powered by [OpenCode](https://opencode.ai). It ru
 make build
 ```
 
-The binary is written to `build/opencode-reviewer`.
+The binaries are written to `build/opencode-reviewer` and `build/opencode-reviewer-comment-warrior`.
 
 ## Quick Start
 
@@ -45,6 +45,12 @@ Full CLI help is available with:
 
 ```bash
 ./build/opencode-reviewer --help
+```
+
+Comment-warrior handles existing GitLab discussions after the branch is checked out:
+
+```bash
+./build/opencode-reviewer-comment-warrior --config ./configs/dev.toml --mr-iid 123 --dry-run
 ```
 
 ## `.opencodereview`
@@ -84,6 +90,13 @@ Recommended structure:
       custom_tool.ts
     sub-agents/
       verifier.md
+  comment-warrior/
+    agent.md
+    message.md
+    tools/
+      submit_comment_warrior_decision.ts
+    sub-agents/
+      verifier.md
 ```
 
 File mapping:
@@ -99,8 +112,12 @@ File mapping:
 | `finalizer/message.md` | Phase 2 finalizer user message |
 | `finalizer/sub-agents/*.md` | Finalizer sub-agent prompts; files are sorted lexicographically |
 | `finalizer/tools/*.ts` | Optional finalizer tool overrides or custom tools |
+| `comment-warrior/agent.md` | Comment-warrior system prompt |
+| `comment-warrior/message.md` | Comment-warrior base user message |
+| `comment-warrior/sub-agents/*.md` | Comment-warrior sub-agent prompts; files are sorted lexicographically |
+| `comment-warrior/tools/*.ts` | Optional comment-warrior tool overrides or custom tools |
 
-`submit_review.ts` and `submit_final_review.ts` are built in. Add files under `reviewer/tools` or `finalizer/tools` only when you need to override a built-in tool or add a custom OpenCode tool.
+`submit_review.ts`, `submit_final_review.ts`, and `submit_comment_warrior_decision.ts` are built in. Add files under phase `tools` directories only when you need to override a built-in tool or add a custom OpenCode tool.
 
 When files exist in `.opencodereview`, they override the corresponding TOML prompt/provider paths. Scalar settings such as branch, GitLab URL, and timeouts can be set only with an explicit `--config` TOML file or env vars. Keep the model in `provider.json` unless you intentionally need an env or explicit TOML override.
 
@@ -144,6 +161,19 @@ Common flags:
 | `--review-dump FILE` | Save final review JSON for debugging |
 | `--fast-review FILE` | Replay a saved review JSON without running LLM stages |
 
+Comment-warrior flags:
+
+| Flag | Description |
+|---|---|
+| `--config FILE` | Use a TOML config explicitly |
+| `--config-dir DIR` | Use a config directory explicitly; files are read after checkout |
+| `--branch BRANCH` | Branch to checkout; priority is flag, `OR_BRANCH`, CI source branch, TOML |
+| `--mr-iid IID` | GitLab merge request IID |
+| `--dry-run` | Build tasks and run the agent without GitLab mutations |
+| `--max-discussions N` | Limit processed discussions; `0` means no limit |
+| `--discussion-id ID` | Process one GitLab discussion |
+| `--disable-config-dir-auto-discovery` | Disable `.opencodereview` auto-discovery |
+
 Common env vars:
 
 | Variable | Description |
@@ -156,6 +186,9 @@ Common env vars:
 | `OR_GITLAB_URL` | GitLab instance URL |
 | `OR_GITLAB_TOKEN` | GitLab private access token |
 | `OR_GITLAB_PROJECT_ID` | Numeric GitLab project ID |
+| `OR_COMMENT_WARRIOR_MR_IID` | MR IID for comment-warrior |
+| `OR_COMMENT_WARRIOR_AGENT_PROMPT_PATH` | Deprecated fallback comment-warrior agent prompt path when config-dir is inactive |
+| `OR_COMMENT_WARRIOR_MESSAGE_PATH` | Deprecated fallback comment-warrior message path when config-dir is inactive |
 | `OR_SLOG_LEVEL` | Log level: `debug`, `info`, `warn`, `error` |
 
 Deprecated fallback env vars such as `OR_PROVIDER_CONFIG_PATH`, `OR_PROVIDER_CONFIG`, `OR_AGENT_PROMPT_PATH`, `OR_MESSAGE_PATHS`, and finalizer/sub-agent prompt env vars are ignored when config-dir mode is active.

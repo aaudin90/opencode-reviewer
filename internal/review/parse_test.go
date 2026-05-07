@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/aaudin90/opencode-reviewer/internal/models"
+	"github.com/aaudin90/opencode-reviewer/internal/shared/models"
 )
 
 func TestParse_ValidFullJSON(t *testing.T) {

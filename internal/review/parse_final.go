@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/aaudin90/opencode-reviewer/internal/models"
+	"github.com/aaudin90/opencode-reviewer/internal/shared/models"
 )
 
 type submitFinalReviewArgs struct {

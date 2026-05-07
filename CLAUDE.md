@@ -6,18 +6,25 @@ Automated code review pipeline powered by OpenCode.
 
 ```
 cmd/reviewer/main.go         → CLI entry point (kong + TOML config)
-internal/config/             → Configuration loading (TOML + ENV + config-dir defaults)
-internal/git/                → Git operations (diff, fetch, log)
-internal/diff/               → Diff parsing, filtering, context file generation
-internal/runner/             → OpenCode serve/run management
-internal/pipeline/           → Review pipeline orchestration
-internal/agentsmd/           → AGENTS.md & CLAUDE.md swap (empty for review)
-internal/agentconfig/        → Agent prompt loading (config-dir / TOML / deprecated env fallback)
-internal/providerconfig/     → Provider JSON loading (config-dir / TOML / deprecated env fallback)
-internal/subagentconfig/     → Sub-agent prompt loading
-internal/workspace/          → Temporary workspace for opencode config
-internal/vcs/                → VCS publisher interface, line normalizer, Markdown formatting
-internal/vcs/gitlab/         → GitLab MR comments publisher (REST API client)
+cmd/comment-warrior/main.go → GitLab discussion follow-up CLI
+internal/review/             → Review parsers and review-specific packages
+internal/review/pipeline/    → Review pipeline orchestration
+internal/review/runtime/     → Review OpenCode runtime loading and built-in tools
+internal/review/agentsmd/    → AGENTS.md & CLAUDE.md swap (empty for review)
+internal/review/agentconfig/ → Reviewer agent prompt loading
+internal/review/finalizerconfig/ → Finalizer prompt/message loading
+internal/review/promptconfig/ → Reviewer message loading
+internal/commentwarrior/     → GitLab discussion classification and task logic
+internal/commentwarrior/runtime/ → Comment-warrior OpenCode runtime and built-in tool
+internal/shared/config/      → Configuration loading (TOML + ENV + config-dir defaults)
+internal/shared/git/         → Git operations and repository preparation
+internal/shared/diff/        → Diff parsing, filtering, context file generation
+internal/shared/runner/      → OpenCode serve/run management
+internal/shared/providerconfig/ → Provider JSON loading
+internal/shared/subagentconfig/ → Sub-agent prompt loading
+internal/shared/workspace/   → Generic temporary workspace builder for opencode config
+internal/shared/vcs/         → VCS publisher interface, line normalizer, Markdown formatting
+internal/shared/vcs/gitlab/  → GitLab MR comments publisher (REST API client)
 configs/                     → TOML configs, provider.json, agent-prompt.md
 prompt-examples/             → Example prompt files for parallel review sessions
 prompts/                     → Prompt templates
@@ -139,7 +146,7 @@ After modifying code, always run:
 
 ## CLI Flags and Configuration Sync
 
-Whenever CLI flags or environment variables are added, removed, or changed — including in `cmd/reviewer/main.go`, `internal/config/config.go`, `internal/agentconfig/`, `internal/providerconfig/`, or `internal/promptconfig/` — the following files **must** be updated in the same commit:
+Whenever CLI flags or environment variables are added, removed, or changed — including in `cmd/reviewer/main.go`, `internal/shared/config/config.go`, `internal/review/agentconfig/`, `internal/shared/providerconfig/`, or `internal/review/promptconfig/` — the following files **must** be updated in the same commit:
 
 1. **`README.md`** — CLI Flags table, Environment Variables table, TOML Fields Reference, and Priority Order sections.
 2. **`cmd/reviewer/main.go`** — the `kong.Description(...)` help text (the multi-line string passed to `kong.New`), which is shown by `--help`.
