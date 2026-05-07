@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/aaudin90/opencode-reviewer/internal/shared/models"
+	"github.com/aaudin90/opencode-reviewer/internal/shared/vcs"
 	"github.com/aaudin90/opencode-reviewer/internal/shared/vcs/gitlab"
 )
 
@@ -23,11 +26,54 @@ func BuildTask(cfg TaskConfig) string {
 		b.Write(data)
 		b.WriteString("\n```\n")
 	}
+	if prompt := sourceReviewPrompt(cfg.ProjectDir, cfg.Discussion); prompt != "" {
+		b.WriteString("\n## Source Review Prompt\n\n")
+		b.WriteString("<source_review_prompt>\n")
+		b.WriteString(prompt)
+		if !strings.HasSuffix(prompt, "\n") {
+			b.WriteString("\n")
+		}
+		b.WriteString("</source_review_prompt>\n")
+	}
 	if ctx := codeContext(cfg.ProjectDir, cfg.Discussion); ctx != "" {
 		b.WriteString("\n## Current Code Context\n\n")
 		b.WriteString(ctx)
 	}
 	return b.String()
+}
+
+func sourceReviewPrompt(projectDir string, d gitlab.Discussion) string {
+	path := sourceReviewPromptPath(d)
+	if path == "" {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(projectDir, filepath.FromSlash(path))) // #nosec G304 -- marker path in checked-out project
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+func sourceReviewPromptPath(d gitlab.Discussion) string {
+	if len(d.Notes) == 0 {
+		return ""
+	}
+	for _, marker := range vcs.ParseMarkers(d.Notes[0].Body) {
+		if marker.Kind != "finding" {
+			continue
+		}
+		return firstRefPath(marker.Metadata.SourceMessageRefs)
+	}
+	return ""
+}
+
+func firstRefPath(refs []models.ReviewMessageRef) string {
+	for _, ref := range refs {
+		if ref.Path != "" {
+			return ref.Path
+		}
+	}
+	return ""
 }
 
 func codeContext(projectDir string, d gitlab.Discussion) string {

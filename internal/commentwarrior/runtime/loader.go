@@ -16,9 +16,10 @@ import (
 )
 
 type RuntimeResources struct {
-	Runner  *runner.Runner
-	Message string
-	Cleanup func() error
+	Runner         *runner.Runner
+	FindingMessage string
+	MentionMessage string
+	Cleanup        func() error
 }
 
 type Loader struct {
@@ -62,9 +63,25 @@ func (l *Loader) LoadRuntime(_ context.Context) (*RuntimeResources, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load comment-warrior agent prompt: %w", err)
 	}
-	message, err := loadText(effectiveConfigDir, "comment-warrior/message.md", "OR_COMMENT_WARRIOR_MESSAGE_PATH", defaultMessage, useLegacyEnv)
+	findingMessage, err := loadSpecificText(
+		effectiveConfigDir,
+		"comment-warrior/finding-message.md",
+		"OR_COMMENT_WARRIOR_FINDING_MESSAGE_PATH",
+		defaultFindingMessage,
+		useLegacyEnv,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("load comment-warrior message: %w", err)
+		return nil, fmt.Errorf("load comment-warrior finding message: %w", err)
+	}
+	mentionMessage, err := loadSpecificText(
+		effectiveConfigDir,
+		"comment-warrior/mention-message.md",
+		"OR_COMMENT_WARRIOR_MENTION_MESSAGE_PATH",
+		defaultMentionMessage,
+		useLegacyEnv,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("load comment-warrior mention message: %w", err)
 	}
 	var subAgents []subagentconfig.SubAgent
 	if paths := discoverMarkdown(filepath.Join(effectiveConfigDir, "comment-warrior", "sub-agents")); len(paths) > 0 {
@@ -105,10 +122,29 @@ func (l *Loader) LoadRuntime(_ context.Context) (*RuntimeResources, error) {
 		return nil, fmt.Errorf("create comment-warrior workspace: %w", err)
 	}
 	return &RuntimeResources{
-		Runner:  runner.New(cfg.OpenCode, projectDir, ws),
-		Message: message,
-		Cleanup: ws.Cleanup,
+		Runner:         runner.New(cfg.OpenCode, projectDir, ws),
+		FindingMessage: findingMessage,
+		MentionMessage: mentionMessage,
+		Cleanup:        ws.Cleanup,
 	}, nil
+}
+
+func loadSpecificText(configDir, relPath, envName, fallback string, useLegacyEnv bool) (string, error) {
+	if configDir != "" {
+		if content, ok, err := readOptional(filepath.Join(configDir, relPath)); ok || err != nil {
+			return content, err
+		}
+	}
+	if useLegacyEnv {
+		if path := os.Getenv(envName); path != "" {
+			data, err := os.ReadFile(filepath.Clean(path)) // #nosec G304 G703 -- trusted env fallback
+			if err != nil {
+				return "", err
+			}
+			return string(data), nil
+		}
+	}
+	return fallback, nil
 }
 
 func loadText(configDir, relPath, envName, fallback string, useLegacyEnv bool) (string, error) {

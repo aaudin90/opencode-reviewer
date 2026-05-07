@@ -92,7 +92,8 @@ Recommended structure:
       verifier.md
   comment-warrior/
     agent.md
-    message.md
+    finding-message.md
+    mention-message.md
     tools/
       submit_comment_warrior_decision.ts
     sub-agents/
@@ -113,7 +114,8 @@ File mapping:
 | `finalizer/sub-agents/*.md` | Finalizer sub-agent prompts; files are sorted lexicographically |
 | `finalizer/tools/*.ts` | Optional finalizer tool overrides or custom tools |
 | `comment-warrior/agent.md` | Comment-warrior system prompt |
-| `comment-warrior/message.md` | Comment-warrior base user message |
+| `comment-warrior/finding-message.md` | User message for follow-up on opencode-reviewer finding comments |
+| `comment-warrior/mention-message.md` | User message for human `#ai` mention requests |
 | `comment-warrior/sub-agents/*.md` | Comment-warrior sub-agent prompts; files are sorted lexicographically |
 | `comment-warrior/tools/*.ts` | Optional comment-warrior tool overrides or custom tools |
 
@@ -188,7 +190,8 @@ Common env vars:
 | `OR_GITLAB_PROJECT_ID` | Numeric GitLab project ID |
 | `OR_COMMENT_WARRIOR_MR_IID` | MR IID for comment-warrior |
 | `OR_COMMENT_WARRIOR_AGENT_PROMPT_PATH` | Deprecated fallback comment-warrior agent prompt path when config-dir is inactive |
-| `OR_COMMENT_WARRIOR_MESSAGE_PATH` | Deprecated fallback comment-warrior message path when config-dir is inactive |
+| `OR_COMMENT_WARRIOR_FINDING_MESSAGE_PATH` | Deprecated fallback comment-warrior finding message path when config-dir is inactive |
+| `OR_COMMENT_WARRIOR_MENTION_MESSAGE_PATH` | Deprecated fallback comment-warrior mention message path when config-dir is inactive |
 | `OR_SLOG_LEVEL` | Log level: `debug`, `info`, `warn`, `error` |
 
 Deprecated fallback env vars such as `OR_PROVIDER_CONFIG_PATH`, `OR_PROVIDER_CONFIG`, `OR_AGENT_PROMPT_PATH`, `OR_MESSAGE_PATHS`, and finalizer/sub-agent prompt env vars are ignored when config-dir mode is active.

@@ -45,7 +45,8 @@ Flow:
 Config directory files:
   provider.json
   comment-warrior/agent.md
-  comment-warrior/message.md
+  comment-warrior/finding-message.md
+  comment-warrior/mention-message.md
   comment-warrior/sub-agents/*.md
   comment-warrior/tools/*.ts
 
@@ -57,7 +58,8 @@ Environment variables:
   OR_COMMENT_WARRIOR_MR_IID             MR IID; overridden by --mr-iid
   CI_MERGE_REQUEST_IID                  CI fallback MR IID
   OR_COMMENT_WARRIOR_AGENT_PROMPT_PATH  Deprecated fallback when config-dir is inactive
-  OR_COMMENT_WARRIOR_MESSAGE_PATH       Deprecated fallback when config-dir is inactive
+  OR_COMMENT_WARRIOR_FINDING_MESSAGE_PATH  Deprecated fallback finding message path
+  OR_COMMENT_WARRIOR_MENTION_MESSAGE_PATH  Deprecated fallback mention message path
 
 Priority (branch): --branch > OR_BRANCH > CI_MERGE_REQUEST_SOURCE_BRANCH_NAME > git.branch TOML.
 Priority (MR IID): --mr-iid > OR_COMMENT_WARRIOR_MR_IID > CI_MERGE_REQUEST_IID.`),

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 
+	commentwarriorruntime "github.com/aaudin90/opencode-reviewer/internal/commentwarrior/runtime"
 	"github.com/aaudin90/opencode-reviewer/internal/shared/git"
 	"github.com/aaudin90/opencode-reviewer/internal/shared/runner"
 	"github.com/aaudin90/opencode-reviewer/internal/shared/vcs"
@@ -84,7 +85,17 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		if !ShouldProcessDiscussion(classification, d, me.ID) {
 			continue
 		}
-		task := resources.Message + "\n\n" + BuildTask(TaskConfig{Discussion: d, ProjectDir: p.cfg.ProjectDir})
+		sourcePromptPath := sourceReviewPromptPath(d)
+		sourcePrompt := sourceReviewPrompt(p.cfg.ProjectDir, d)
+		slog.Info("prepared comment-warrior task",
+			"discussion_id", d.ID,
+			"classification", classification,
+			"message_kind", messageKind(classification),
+			"source_review_prompt_path", sourcePromptPath,
+			"source_review_prompt_loaded", sourcePrompt != "",
+			"source_review_prompt_bytes", len(sourcePrompt),
+		)
+		task := messageForClassification(resources, classification) + "\n\n" + BuildTask(TaskConfig{Discussion: d, ProjectDir: p.cfg.ProjectDir})
 		decision, err := runDecision(ctx, resources.Runner, task, d.ID)
 		if err != nil {
 			return err
@@ -99,6 +110,20 @@ func (p *Pipeline) Run(ctx context.Context) error {
 	}
 	slog.Info("comment-warrior completed", "processed", processed)
 	return nil
+}
+
+func messageForClassification(resources *commentwarriorruntime.RuntimeResources, classification Classification) string {
+	if classification == ClassHumanMentionAI {
+		return resources.MentionMessage
+	}
+	return resources.FindingMessage
+}
+
+func messageKind(classification Classification) string {
+	if classification == ClassHumanMentionAI {
+		return "mention"
+	}
+	return "finding"
 }
 
 func shouldConfirmClosure(classification Classification, discussion gitlabvcs.Discussion, decision Decision) bool {
