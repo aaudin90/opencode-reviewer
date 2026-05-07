@@ -5,14 +5,11 @@ import (
 	"testing"
 )
 
-func TestDefaultMessageMentionsSourceReviewPrompt(t *testing.T) {
+func TestDefaultFindingMessageDoesNotCarrySourcePromptInstruction(t *testing.T) {
 	t.Parallel()
 
-	if !strings.Contains(defaultFindingMessage, "<source_review_prompt>") {
-		t.Fatalf("defaultFindingMessage must mention <source_review_prompt>: %q", defaultFindingMessage)
-	}
-	if !strings.Contains(defaultFindingMessage, "prompt") || !strings.Contains(defaultFindingMessage, "original reviewer comment") {
-		t.Fatalf("defaultFindingMessage must explain source_review_prompt meaning: %q", defaultFindingMessage)
+	if strings.Contains(defaultFindingMessage, "<source_review_prompt>") {
+		t.Fatalf("defaultFindingMessage should not mention <source_review_prompt>: %q", defaultFindingMessage)
 	}
 }
 

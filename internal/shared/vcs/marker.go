@@ -62,3 +62,7 @@ func ParseMarkers(body string) []ParsedMarker {
 	}
 	return result
 }
+
+func StripMarkers(body string) string {
+	return markerRE.ReplaceAllString(body, "")
+}

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	commentwarriorruntime "github.com/aaudin90/opencode-reviewer/internal/commentwarrior/runtime"
+	"github.com/aaudin90/opencode-reviewer/internal/shared/diff"
 	"github.com/aaudin90/opencode-reviewer/internal/shared/git"
 	"github.com/aaudin90/opencode-reviewer/internal/shared/runner"
 	"github.com/aaudin90/opencode-reviewer/internal/shared/vcs"
@@ -41,23 +42,45 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		}
 	}()
 
+	processable, err := p.processableDiscussions(ctx)
+	if err != nil {
+		return err
+	}
+	if len(processable) == 0 {
+		slog.Info("comment-warrior completed", "processed", 0)
+		return nil
+	}
+
 	if !p.cfg.DryRun {
 		if err := p.validateHead(ctx); err != nil {
 			return err
 		}
 	}
-	me, err := p.gitlab.GetCurrentUser(ctx)
-	if err != nil {
-		return fmt.Errorf("get current user: %w", err)
-	}
-	discussions, err := p.gitlab.ListDiscussions(ctx, p.cfg.MRIID)
+
+	processed, err := p.runProcessableDiscussions(ctx, processable)
 	if err != nil {
 		return err
 	}
+	slog.Info("comment-warrior completed", "processed", processed)
+	return nil
+}
 
+func (p *Pipeline) processableDiscussions(ctx context.Context) ([]processableDiscussion, error) {
+	me, err := p.gitlab.GetCurrentUser(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get current user: %w", err)
+	}
+	discussions, err := p.gitlab.ListDiscussions(ctx, p.cfg.MRIID)
+	if err != nil {
+		return nil, err
+	}
+	return p.filterProcessableDiscussions(discussions, me.ID), nil
+}
+
+func (p *Pipeline) runProcessableDiscussions(ctx context.Context, processable []processableDiscussion) (int, error) {
 	resources, err := p.loader.LoadRuntime(ctx)
 	if err != nil {
-		return fmt.Errorf("load runtime: %w", err)
+		return 0, fmt.Errorf("load runtime: %w", err)
 	}
 	defer func() {
 		if err := resources.Cleanup(); err != nil {
@@ -66,50 +89,81 @@ func (p *Pipeline) Run(ctx context.Context) error {
 	}()
 
 	if err := resources.Runner.StartServe(ctx); err != nil {
-		return fmt.Errorf("start opencode: %w", err)
+		return 0, fmt.Errorf("start opencode: %w", err)
 	}
 	defer resources.Runner.StopServe()
 	if err := resources.Runner.Precheck(ctx, "comment-warrior"); err != nil {
-		return fmt.Errorf("precheck: %w", err)
+		return 0, fmt.Errorf("precheck: %w", err)
+	}
+	diffPath, err := p.prepareDiff()
+	if err != nil {
+		return 0, fmt.Errorf("prepare diff: %w", err)
 	}
 
 	processed := 0
+	for _, item := range processable {
+		if err := p.processDiscussion(ctx, resources, item, diffPath); err != nil {
+			return processed, err
+		}
+		processed++
+	}
+	return processed, nil
+}
+
+func (p *Pipeline) processDiscussion(ctx context.Context, resources *commentwarriorruntime.RuntimeResources, item processableDiscussion, diffPath string) error {
+	d := item.discussion
+	classification := item.classification
+	sourcePromptPath := sourceReviewPromptPath(d)
+	sourcePrompt := sourceReviewPrompt(p.cfg.ProjectDir, d)
+	slog.Info("prepared comment-warrior task",
+		"discussion_id", d.ID,
+		"classification", classification,
+		"message_kind", messageKind(classification),
+		"source_review_prompt_path", sourcePromptPath,
+		"source_review_prompt_loaded", sourcePrompt != "",
+		"source_review_prompt_bytes", len(sourcePrompt),
+	)
+	task := buildPrompt(
+		messageForClassification(resources, classification),
+		sourcePrompt,
+		buildTask(taskConfig{
+			Discussion:         d,
+			ProjectDir:         p.cfg.ProjectDir,
+			DiffPath:           diffPath,
+			SourceReviewPrompt: sourcePrompt,
+		}),
+	)
+	decision, err := runDecision(ctx, resources.Runner, task, d.ID)
+	if err != nil {
+		return err
+	}
+	closureConfirmation := shouldConfirmClosure(classification, d, *decision)
+	if p.cfg.DryRun {
+		slog.Info("dry-run planned action", "discussion_id", d.ID, "action", decision.Action, "confidence", decision.Confidence, "reason", decision.Reason)
+		return nil
+	}
+	return p.applyDecision(ctx, d.ID, *decision, closureConfirmation)
+}
+
+func (p *Pipeline) filterProcessableDiscussions(discussions []gitlabvcs.Discussion, botUserID int) []processableDiscussion {
+	result := make([]processableDiscussion, 0, len(discussions))
 	for _, d := range discussions {
 		if p.cfg.DiscussionID != "" && d.ID != p.cfg.DiscussionID {
 			continue
 		}
-		if p.cfg.MaxDiscussions > 0 && processed >= p.cfg.MaxDiscussions {
+		if p.cfg.MaxDiscussions > 0 && len(result) >= p.cfg.MaxDiscussions {
 			break
 		}
-		classification := ClassifyDiscussion(d, me.ID)
-		if !ShouldProcessDiscussion(classification, d, me.ID) {
+		classification := ClassifyDiscussion(d, botUserID)
+		if !ShouldProcessDiscussion(classification, d, botUserID) {
 			continue
 		}
-		sourcePromptPath := sourceReviewPromptPath(d)
-		sourcePrompt := sourceReviewPrompt(p.cfg.ProjectDir, d)
-		slog.Info("prepared comment-warrior task",
-			"discussion_id", d.ID,
-			"classification", classification,
-			"message_kind", messageKind(classification),
-			"source_review_prompt_path", sourcePromptPath,
-			"source_review_prompt_loaded", sourcePrompt != "",
-			"source_review_prompt_bytes", len(sourcePrompt),
-		)
-		task := messageForClassification(resources, classification) + "\n\n" + BuildTask(TaskConfig{Discussion: d, ProjectDir: p.cfg.ProjectDir})
-		decision, err := runDecision(ctx, resources.Runner, task, d.ID)
-		if err != nil {
-			return err
-		}
-		closureConfirmation := shouldConfirmClosure(classification, d, *decision)
-		if p.cfg.DryRun {
-			slog.Info("dry-run planned action", "discussion_id", d.ID, "action", decision.Action, "confidence", decision.Confidence, "reason", decision.Reason)
-		} else if err := p.applyDecision(ctx, d.ID, *decision, closureConfirmation); err != nil {
-			return err
-		}
-		processed++
+		result = append(result, processableDiscussion{
+			discussion:     d,
+			classification: classification,
+		})
 	}
-	slog.Info("comment-warrior completed", "processed", processed)
-	return nil
+	return result
 }
 
 func messageForClassification(resources *commentwarriorruntime.RuntimeResources, classification Classification) string {
@@ -117,6 +171,15 @@ func messageForClassification(resources *commentwarriorruntime.RuntimeResources,
 		return resources.MentionMessage
 	}
 	return resources.FindingMessage
+}
+
+func buildPrompt(message, sourcePrompt, task string) string {
+	parts := []string{message}
+	if sourcePrompt != "" {
+		parts = append(parts, "A <source_review_prompt> block is attached below. Use it as context for the review rules that produced the original AI finding.")
+	}
+	parts = append(parts, task)
+	return strings.Join(parts, "\n\n")
 }
 
 func messageKind(classification Classification) string {
@@ -192,6 +255,27 @@ func (p *Pipeline) reply(ctx context.Context, discussionID, body string, closure
 		body = vcs.AppendMarker(body, ClosureConfirmedMarkerKind, vcs.MarkerMetadata{})
 	}
 	return p.gitlab.ReplyToDiscussion(ctx, p.cfg.MRIID, discussionID, body)
+}
+
+func (p *Pipeline) prepareDiff() (string, error) {
+	slog.Info("preparing comment-warrior diff context", "branch", p.cfg.Branch, "base", p.cfg.BaseBranch)
+	result, err := diff.Prepare(p.git, p.cfg.Branch, p.cfg.BaseBranch)
+	if err != nil {
+		return "", fmt.Errorf("prepare: %w", err)
+	}
+	slog.Info("comment-warrior diff parsed",
+		"files", len(result.Files),
+		"filtered", len(result.FilteredFiles),
+		"added", result.TotalAdded,
+		"deleted", result.TotalDeleted,
+		"tokens_estimate", diff.EstimateTokens(result),
+	)
+	path, err := diff.WriteContextFile(result, p.git.Dir())
+	if err != nil {
+		return "", fmt.Errorf("write context file: %w", err)
+	}
+	slog.Info("comment-warrior diff context ready", "path", path)
+	return path, nil
 }
 
 func (p *Pipeline) validateHead(ctx context.Context) error {

@@ -122,6 +122,7 @@ func run(ctx context.Context, cfg *config.Config, cli CLI, configBaseDir string,
 	pipeline := commentwarrior.NewPipeline(commentwarrior.PipelineConfig{
 		ProjectDir:     projectDir,
 		Branch:         cfg.Git.Branch,
+		BaseBranch:     cfg.Git.BaseBranch,
 		MRIID:          mrIID,
 		DryRun:         cli.DryRun,
 		MaxDiscussions: cli.MaxDiscussions,

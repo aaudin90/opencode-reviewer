@@ -1,12 +1,9 @@
 package commentwarrior
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/aaudin90/opencode-reviewer/internal/shared/models"
 	"github.com/aaudin90/opencode-reviewer/internal/shared/vcs"
 	"github.com/aaudin90/opencode-reviewer/internal/shared/vcs/gitlab"
 )
@@ -14,28 +11,11 @@ import (
 func TestBuildTaskIncludesSourceReviewPrompt(t *testing.T) {
 	t.Parallel()
 
-	projectDir := t.TempDir()
-	promptPath := filepath.Join(projectDir, "reviewer", "messages", "security.md")
-	if err := os.MkdirAll(filepath.Dir(promptPath), 0o755); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
-	}
 	prompt := "Check SQL injection paths carefully.\nPrefer real exploitability."
-	if err := os.WriteFile(promptPath, []byte(prompt), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
 
-	task := BuildTask(TaskConfig{
-		ProjectDir: projectDir,
-		Discussion: gitlab.Discussion{
-			Notes: []gitlab.Note{{
-				Body: vcs.AppendMarker("finding", "finding", vcs.MarkerMetadata{
-					SourceMessageRefs: []models.ReviewMessageRef{
-						{ID: "inline-1"},
-						{ID: "security", Path: "reviewer/messages/security.md"},
-					},
-				}),
-			}},
-		},
+	task := buildTask(taskConfig{
+		SourceReviewPrompt: prompt,
+		Discussion:         gitlab.Discussion{Notes: []gitlab.Note{{Body: "finding"}}},
 	})
 
 	if !strings.Contains(task, "## Source Review Prompt") {
@@ -49,52 +29,88 @@ func TestBuildTaskIncludesSourceReviewPrompt(t *testing.T) {
 func TestBuildTaskSkipsSourceReviewPromptWhenUnavailable(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name       string
-		discussion gitlab.Discussion
-	}{
-		{
-			name: "empty ref path",
-			discussion: gitlab.Discussion{
-				Notes: []gitlab.Note{{
-					Body: vcs.AppendMarker("finding", "finding", vcs.MarkerMetadata{
-						SourceMessageRefs: []models.ReviewMessageRef{{ID: "x"}},
-					}),
-				}},
-			},
-		},
-		{
-			name: "missing file",
-			discussion: gitlab.Discussion{
-				Notes: []gitlab.Note{{
-					Body: vcs.AppendMarker("finding", "finding", vcs.MarkerMetadata{
-						SourceMessageRefs: []models.ReviewMessageRef{{ID: "x", Path: "missing.md"}},
-					}),
-				}},
-			},
-		},
-		{
-			name: "no finding marker",
-			discussion: gitlab.Discussion{
-				Notes: []gitlab.Note{{Body: "plain note"}},
-			},
-		},
+	task := buildTask(taskConfig{
+		Discussion: gitlab.Discussion{Notes: []gitlab.Note{{Body: "plain note"}}},
+	})
+	if strings.Contains(task, "## Source Review Prompt") {
+		t.Fatalf("unexpected source prompt section:\n%s", task)
 	}
+	if strings.Contains(task, "<source_review_prompt>") {
+		t.Fatalf("unexpected source prompt tag:\n%s", task)
+	}
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
+func TestBuildTaskIncludesDiffContextPath(t *testing.T) {
+	t.Parallel()
 
-			task := BuildTask(TaskConfig{
-				ProjectDir: t.TempDir(),
-				Discussion: tt.discussion,
-			})
-			if strings.Contains(task, "## Source Review Prompt") {
-				t.Fatalf("unexpected source prompt section:\n%s", task)
-			}
-			if strings.Contains(task, "<source_review_prompt>") {
-				t.Fatalf("unexpected source prompt tag:\n%s", task)
-			}
-		})
+	diffPath := "/repo/.opencode-review/diff.md"
+	task := buildTask(taskConfig{
+		DiffPath:   diffPath,
+		Discussion: gitlab.Discussion{Notes: []gitlab.Note{{Body: "finding"}}},
+	})
+
+	if !strings.Contains(task, "## MR Diff Context") {
+		t.Fatalf("task missing diff context section:\n%s", task)
+	}
+	if !strings.Contains(task, "`"+diffPath+"`") {
+		t.Fatalf("task missing diff path:\n%s", task)
+	}
+}
+
+func TestBuildTaskCompactsDiscussionAndStripsMarkers(t *testing.T) {
+	t.Parallel()
+
+	body := vcs.AppendMarker("finding body", "finding", vcs.MarkerMetadata{
+		BaseSHA:   "base",
+		HeadSHA:   "head",
+		StartSHA:  "start",
+		File:      "path.kt",
+		StartLine: 9,
+	})
+	task := buildTask(taskConfig{
+		Discussion: gitlab.Discussion{
+			ID:             "discussion-id",
+			IndividualNote: true,
+			Notes: []gitlab.Note{{
+				ID:         10,
+				Body:       body,
+				Resolvable: true,
+				Resolved:   false,
+				Author:     gitlab.Author{ID: 123, Username: "bot", Name: "Bot"},
+				Position: &gitlab.Position{
+					PositionType: "text",
+					BaseSHA:      "base",
+					HeadSHA:      "head",
+					StartSHA:     "start",
+					NewPath:      "path.kt",
+					NewLine:      9,
+				},
+			}},
+		},
+	})
+
+	for _, unexpected := range []string{
+		"opencode-reviewer:finding",
+		"individual_note",
+		"base_sha",
+		"head_sha",
+		"start_sha",
+		"position_type",
+		`"id": 123`,
+	} {
+		if strings.Contains(task, unexpected) {
+			t.Fatalf("task contains noisy field %q:\n%s", unexpected, task)
+		}
+	}
+	for _, expected := range []string{
+		`"id": "discussion-id"`,
+		`"body": "finding body"`,
+		`"username": "bot"`,
+		`"path": "path.kt"`,
+		`"line": 9`,
+	} {
+		if !strings.Contains(task, expected) {
+			t.Fatalf("task missing expected field %q:\n%s", expected, task)
+		}
 	}
 }

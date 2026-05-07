@@ -12,21 +12,25 @@ import (
 	"github.com/aaudin90/opencode-reviewer/internal/shared/vcs/gitlab"
 )
 
-type TaskConfig struct {
-	Discussion gitlab.Discussion
-	ProjectDir string
+type taskConfig struct {
+	Discussion         gitlab.Discussion
+	ProjectDir         string
+	DiffPath           string
+	SourceReviewPrompt string
 }
 
-func BuildTask(cfg TaskConfig) string {
+func buildTask(cfg taskConfig) string {
 	var b strings.Builder
-	b.WriteString("Handle exactly one GitLab discussion. Decide whether the AI finding is fixed, still valid, needs a reply, or should be ignored.\n")
-	b.WriteString("Do not modify files. Use submit_comment_warrior_decision exactly once.\n\n")
-	if data, err := json.MarshalIndent(cfg.Discussion, "", "  "); err == nil {
+	if data, err := json.MarshalIndent(compactDiscussion(cfg.Discussion), "", "  "); err == nil {
 		b.WriteString("## Discussion\n\n```json\n")
 		b.Write(data)
 		b.WriteString("\n```\n")
 	}
-	if prompt := sourceReviewPrompt(cfg.ProjectDir, cfg.Discussion); prompt != "" {
+	if cfg.DiffPath != "" {
+		b.WriteString("\n## MR Diff Context\n\n")
+		fmt.Fprintf(&b, "Open and read `%s` when you need the full merge request diff.\n", cfg.DiffPath)
+	}
+	if prompt := cfg.SourceReviewPrompt; prompt != "" {
 		b.WriteString("\n## Source Review Prompt\n\n")
 		b.WriteString("<source_review_prompt>\n")
 		b.WriteString(prompt)
@@ -40,6 +44,63 @@ func BuildTask(cfg TaskConfig) string {
 		b.WriteString(ctx)
 	}
 	return b.String()
+}
+
+type discussionContext struct {
+	ID    string        `json:"id"`
+	Notes []noteContext `json:"notes"`
+}
+
+type noteContext struct {
+	ID         int              `json:"id"`
+	Body       string           `json:"body"`
+	System     bool             `json:"system,omitempty"`
+	Resolvable bool             `json:"resolvable,omitempty"`
+	Resolved   bool             `json:"resolved,omitempty"`
+	Author     authorContext    `json:"author"`
+	Position   *positionContext `json:"position,omitempty"`
+}
+
+type authorContext struct {
+	Username string `json:"username"`
+	Name     string `json:"name,omitempty"`
+}
+
+type positionContext struct {
+	Path string `json:"path,omitempty"`
+	Line int    `json:"line,omitempty"`
+}
+
+func compactDiscussion(d gitlab.Discussion) discussionContext {
+	notes := make([]noteContext, 0, len(d.Notes))
+	for _, n := range d.Notes {
+		notes = append(notes, noteContext{
+			ID:         n.ID,
+			Body:       strings.TrimSpace(vcs.StripMarkers(n.Body)),
+			System:     n.System,
+			Resolvable: n.Resolvable,
+			Resolved:   n.Resolved,
+			Author: authorContext{
+				Username: n.Author.Username,
+				Name:     n.Author.Name,
+			},
+			Position: compactPosition(n.Position),
+		})
+	}
+	return discussionContext{ID: d.ID, Notes: notes}
+}
+
+func compactPosition(p *gitlab.Position) *positionContext {
+	if p == nil {
+		return nil
+	}
+	path := p.NewPath
+	line := p.NewLine
+	if path == "" {
+		path = p.OldPath
+		line = p.OldLine
+	}
+	return &positionContext{Path: path, Line: line}
 }
 
 func sourceReviewPrompt(projectDir string, d gitlab.Discussion) string {

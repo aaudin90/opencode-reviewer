@@ -21,7 +21,7 @@ func ClassifyDiscussion(d gitlab.Discussion, botUserID int) Classification {
 	if len(d.Notes) == 0 {
 		return ClassIgnore
 	}
-	if HasUnhandledAIMention(d, botUserID) {
+	if hasUnhandledAIMention(d, botUserID) {
 		return ClassHumanMentionAI
 	}
 	first := d.Notes[0]
@@ -38,7 +38,7 @@ func ClassifyDiscussion(d gitlab.Discussion, botUserID int) Classification {
 func ShouldProcessDiscussion(classification Classification, d gitlab.Discussion, botUserID int) bool {
 	switch classification {
 	case ClassHumanMentionAI:
-		return HasUnhandledAIMention(d, botUserID)
+		return hasUnhandledAIMention(d, botUserID)
 	case ClassAIFinding:
 		if discussionResolved(d) {
 			return !LatestBotNoteHasClosureConfirmedMarker(d, botUserID)
@@ -122,7 +122,7 @@ func latestHumanNote(d gitlab.Discussion, botUserID int) *gitlab.Note {
 	return nil
 }
 
-func HasUnhandledAIMention(d gitlab.Discussion, botUserID int) bool {
+func hasUnhandledAIMention(d gitlab.Discussion, botUserID int) bool {
 	for i := len(d.Notes) - 1; i >= 0; i-- {
 		n := d.Notes[i]
 		if n.System {
