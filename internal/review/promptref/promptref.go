@@ -22,6 +22,12 @@ func FromContent(id, content string) models.ReviewMessageRef {
 // LoadReviewMessages reads file-backed and inline reviewer messages and returns
 // content with compact references.
 func LoadReviewMessages(baseDir string, paths []string, inline []string) ([]models.ReviewMessage, error) {
+	return LoadReviewMessagesWithRefBase(baseDir, baseDir, paths, inline)
+}
+
+// LoadReviewMessagesWithRefBase reads messages relative to baseDir and stores
+// file references relative to refBaseDir.
+func LoadReviewMessagesWithRefBase(baseDir, refBaseDir string, paths []string, inline []string) ([]models.ReviewMessage, error) {
 	if len(inline) > 0 {
 		result := make([]models.ReviewMessage, 0, len(inline))
 		for i, content := range inline {
@@ -45,7 +51,7 @@ func LoadReviewMessages(baseDir string, paths []string, inline []string) ([]mode
 		result = append(result, models.ReviewMessage{
 			Ref: models.ReviewMessageRef{
 				ID:     strings.TrimSuffix(filepath.Base(abs), filepath.Ext(abs)),
-				Path:   abs,
+				Path:   refPath(abs, refBaseDir),
 				SHA256: hash(content),
 			},
 			Content: content,
@@ -53,6 +59,17 @@ func LoadReviewMessages(baseDir string, paths []string, inline []string) ([]mode
 		_ = i
 	}
 	return result, nil
+}
+
+func refPath(abs, refBaseDir string) string {
+	if refBaseDir == "" {
+		return filepath.ToSlash(filepath.Clean(abs))
+	}
+	rel, err := filepath.Rel(refBaseDir, abs)
+	if err != nil {
+		return filepath.ToSlash(filepath.Clean(abs))
+	}
+	return filepath.ToSlash(filepath.Clean(rel))
 }
 
 // MatchExact returns the message whose ref matches all non-empty fields in ref.

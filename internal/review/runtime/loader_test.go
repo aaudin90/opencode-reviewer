@@ -32,6 +32,9 @@ func TestLoaderLoadsConfigDirAfterCheckout(t *testing.T) {
 	if len(resources.Messages) != 1 || resources.Messages[0].Content != "branch message" {
 		t.Fatalf("messages = %v, want branch message", resources.Messages)
 	}
+	if got := resources.Messages[0].Ref.Path; got != ".opencodereview/reviewer/messages/01.md" {
+		t.Fatalf("message ref path = %q, want relative config-dir path", got)
+	}
 }
 
 func TestLoaderUsesConfigDirVersionFromCheckedOutBranch(t *testing.T) {

@@ -52,6 +52,11 @@ func (l *Loader) LoadRuntime(_ context.Context) (*pipeline.RuntimeResources, err
 	useLegacyEnvConfig := effectiveConfigDir == ""
 	resolutionBaseDir := l.cfg.ConfigBaseDir
 
+	projectDir, err := filepath.Abs(cfg.ProjectDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve project dir: %w", err)
+	}
+
 	providerPath := resolveRelativePath(resolutionBaseDir, cfg.OpenCode.ProviderConfigPath)
 	providerJSON, err := providerconfig.LoadWithOptions(providerPath, providerconfig.Options{
 		UseLegacyEnv:      useLegacyEnvConfig,
@@ -79,7 +84,7 @@ func (l *Loader) LoadRuntime(_ context.Context) (*pipeline.RuntimeResources, err
 		return nil, fmt.Errorf("load finalizer prompt: %w", err)
 	}
 
-	messages, err := promptconfig.LoadReviewMessagesWithOptions(resolutionBaseDir, cfg.Pipeline.ReviewMessagePaths, cfg.Pipeline.ReviewMessages, promptconfig.Options{
+	messages, err := promptconfig.LoadReviewMessagesWithRefBaseAndOptions(resolutionBaseDir, projectDir, cfg.Pipeline.ReviewMessagePaths, cfg.Pipeline.ReviewMessages, promptconfig.Options{
 		UseLegacyEnv:      useLegacyEnvConfig,
 		LegacyEnvFallback: useLegacyEnvConfig,
 	})
@@ -139,11 +144,6 @@ func (l *Loader) LoadRuntime(_ context.Context) (*pipeline.RuntimeResources, err
 
 	if err := runner.ValidateBinary(cfg.OpenCode); err != nil {
 		return nil, fmt.Errorf("opencode is not available: %w", err)
-	}
-
-	projectDir, err := filepath.Abs(cfg.ProjectDir)
-	if err != nil {
-		return nil, fmt.Errorf("resolve project dir: %w", err)
 	}
 
 	reviewerWS, err := workspace.NewAgent(workspace.Config{

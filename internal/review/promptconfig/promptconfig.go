@@ -36,6 +36,10 @@ func LoadWithOptions(configDir string, tomlPaths []string, tomlInline []string, 
 }
 
 func LoadReviewMessagesWithOptions(configDir string, tomlPaths []string, tomlInline []string, opts Options) ([]models.ReviewMessage, error) {
+	return LoadReviewMessagesWithRefBaseAndOptions(configDir, configDir, tomlPaths, tomlInline, opts)
+}
+
+func LoadReviewMessagesWithRefBaseAndOptions(configDir, refBaseDir string, tomlPaths []string, tomlInline []string, opts Options) ([]models.ReviewMessage, error) {
 	if opts.UseLegacyEnv && !opts.LegacyEnvFallback {
 		if raw := os.Getenv("OR_MESSAGE_PATHS"); raw != "" {
 			cwd, err := os.Getwd()
@@ -46,10 +50,10 @@ func LoadReviewMessagesWithOptions(configDir string, tomlPaths []string, tomlInl
 		}
 	}
 	if len(tomlInline) > 0 {
-		return promptref.LoadReviewMessages(configDir, nil, tomlInline)
+		return promptref.LoadReviewMessagesWithRefBase(configDir, refBaseDir, nil, tomlInline)
 	}
 	if len(tomlPaths) > 0 {
-		return promptref.LoadReviewMessages(configDir, tomlPaths, nil)
+		return promptref.LoadReviewMessagesWithRefBase(configDir, refBaseDir, tomlPaths, nil)
 	}
 	if opts.UseLegacyEnv && opts.LegacyEnvFallback {
 		if raw := os.Getenv("OR_MESSAGE_PATHS"); raw != "" {
