@@ -3,6 +3,7 @@ package commentwarrior
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 type Action string
@@ -51,15 +52,15 @@ func ValidateDecision(d Decision) error {
 	if d.NeedsHuman && d.Action != ActionNoop {
 		return fmt.Errorf("needs_human decisions must use noop")
 	}
-	if d.Action == ActionReply && d.Body == "" {
-		return fmt.Errorf("reply action requires body")
+	if d.Action != ActionNoop && strings.TrimSpace(d.Body) == "" {
+		return fmt.Errorf("%s action requires body", d.Action)
 	}
 	return nil
 }
 
 const DecisionSchemaHint = `{
   "action": "reply|resolve|unresolve|noop",
-  "body": "required for reply; optional explanatory comment for resolve/unresolve; empty for noop",
+  "body": "required non-empty text for reply|resolve|unresolve; empty only for noop",
   "confidence": "high|medium|low",
   "would_modify_code": false,
   "needs_human": false,

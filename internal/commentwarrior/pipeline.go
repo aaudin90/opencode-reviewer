@@ -89,7 +89,7 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		closureConfirmation := classification == ClassAIFinding && discussionResolved(d)
+		closureConfirmation := shouldConfirmClosure(classification, d, *decision)
 		if p.cfg.DryRun {
 			slog.Info("dry-run planned action", "discussion_id", d.ID, "action", decision.Action, "confidence", decision.Confidence, "reason", decision.Reason)
 		} else if err := p.applyDecision(ctx, d.ID, *decision, closureConfirmation); err != nil {
@@ -99,6 +99,16 @@ func (p *Pipeline) Run(ctx context.Context) error {
 	}
 	slog.Info("comment-warrior completed", "processed", processed)
 	return nil
+}
+
+func shouldConfirmClosure(classification Classification, discussion gitlabvcs.Discussion, decision Decision) bool {
+	if classification != ClassAIFinding {
+		return false
+	}
+	if discussionResolved(discussion) {
+		return decision.Action == ActionReply || decision.Action == ActionResolve
+	}
+	return decision.Action == ActionResolve
 }
 
 func runDecision(ctx context.Context, r *runner.Runner, prompt, discussionID string) (*Decision, error) {

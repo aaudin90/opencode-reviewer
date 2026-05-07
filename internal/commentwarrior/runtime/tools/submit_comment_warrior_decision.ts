@@ -5,7 +5,7 @@ export default tool({
 
   args: {
     action: tool.schema.enum(["reply", "resolve", "unresolve", "noop"]),
-    body: tool.schema.string().describe("Required for action=reply. Optional explanatory comment for action=resolve or action=unresolve. Empty for action=noop."),
+    body: tool.schema.string().describe("Required non-empty text for action=reply, action=resolve, and action=unresolve. Empty only for action=noop."),
     confidence: tool.schema.enum(["high", "medium", "low"]),
     would_modify_code: tool.schema.boolean(),
     needs_human: tool.schema.boolean(),
