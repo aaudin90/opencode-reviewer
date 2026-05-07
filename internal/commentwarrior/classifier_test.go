@@ -108,3 +108,41 @@ func TestShouldProcessDiscussion_AIFindingRequiresResolvedOrHumanNote(t *testing
 		})
 	}
 }
+
+func TestClassifyDiscussion_UnhandledHumanMentionWinsOverFindingMarker(t *testing.T) {
+	t.Parallel()
+
+	const botID = 10
+	findingBody := vcs.AppendMarker("finding", "finding", vcs.MarkerMetadata{File: "file.kt"})
+	d := gitlab.Discussion{Notes: []gitlab.Note{
+		{ID: 1, Body: findingBody, Author: gitlab.Author{ID: botID}, Resolvable: true},
+		{ID: 2, Body: "#ai please recheck", Author: gitlab.Author{ID: 20}},
+		{ID: 3, Body: "additional human context", Author: gitlab.Author{ID: 20}},
+	}}
+
+	if got := ClassifyDiscussion(d, botID); got != ClassHumanMentionAI {
+		t.Fatalf("ClassifyDiscussion() = %q, want %q", got, ClassHumanMentionAI)
+	}
+	if got := ShouldProcessDiscussion(ClassHumanMentionAI, d, botID); !got {
+		t.Fatalf("ShouldProcessDiscussion() = false, want true")
+	}
+}
+
+func TestClassifyDiscussion_HandledHumanMentionFallsBackToFinding(t *testing.T) {
+	t.Parallel()
+
+	const botID = 10
+	findingBody := vcs.AppendMarker("finding", "finding", vcs.MarkerMetadata{File: "file.kt"})
+	d := gitlab.Discussion{Notes: []gitlab.Note{
+		{ID: 1, Body: findingBody, Author: gitlab.Author{ID: botID}, Resolvable: true},
+		{ID: 2, Body: "#ai please recheck", Author: gitlab.Author{ID: 20}},
+		{ID: 3, Body: "answered", Author: gitlab.Author{ID: botID}},
+	}}
+
+	if got := ClassifyDiscussion(d, botID); got != ClassAIFinding {
+		t.Fatalf("ClassifyDiscussion() = %q, want %q", got, ClassAIFinding)
+	}
+	if got := ShouldProcessDiscussion(ClassHumanMentionAI, d, botID); got {
+		t.Fatalf("ShouldProcessDiscussion() = true, want false")
+	}
+}

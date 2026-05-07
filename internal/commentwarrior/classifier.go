@@ -21,6 +21,9 @@ func ClassifyDiscussion(d gitlab.Discussion, botUserID int) Classification {
 	if len(d.Notes) == 0 {
 		return ClassIgnore
 	}
+	if HasUnhandledAIMention(d, botUserID) {
+		return ClassHumanMentionAI
+	}
 	first := d.Notes[0]
 	if first.Author.ID == botUserID {
 		for _, marker := range vcs.ParseMarkers(first.Body) {
@@ -29,21 +32,13 @@ func ClassifyDiscussion(d gitlab.Discussion, botUserID int) Classification {
 			}
 		}
 	}
-	latest := latestHumanNote(d, botUserID)
-	if latest == nil {
-		return ClassIgnore
-	}
-	body := strings.ToLower(latest.Body)
-	if containsAIMarker(body) {
-		return ClassHumanMentionAI
-	}
 	return ClassIgnore
 }
 
 func ShouldProcessDiscussion(classification Classification, d gitlab.Discussion, botUserID int) bool {
 	switch classification {
 	case ClassHumanMentionAI:
-		return !AlreadyHandledLatestMention(d, botUserID)
+		return HasUnhandledAIMention(d, botUserID)
 	case ClassAIFinding:
 		if discussionResolved(d) {
 			return !LatestBotNoteHasClosureConfirmedMarker(d, botUserID)
@@ -127,17 +122,16 @@ func latestHumanNote(d gitlab.Discussion, botUserID int) *gitlab.Note {
 	return nil
 }
 
-func AlreadyHandledLatestMention(d gitlab.Discussion, botUserID int) bool {
-	latestHuman := latestHumanNote(d, botUserID)
-	if latestHuman == nil {
-		return false
-	}
+func HasUnhandledAIMention(d gitlab.Discussion, botUserID int) bool {
 	for i := len(d.Notes) - 1; i >= 0; i-- {
 		n := d.Notes[i]
-		if n.ID == latestHuman.ID {
+		if n.System {
+			continue
+		}
+		if n.Author.ID == botUserID {
 			return false
 		}
-		if n.Author.ID == botUserID && !n.System {
+		if containsAIMarker(strings.ToLower(n.Body)) {
 			return true
 		}
 	}
