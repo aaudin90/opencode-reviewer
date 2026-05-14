@@ -38,7 +38,7 @@ func TestFinalizerStage_Run_Success(t *testing.T) {
 		Endpoint:     srv.URL,
 		Model:        "test/model",
 		StageTimeout: 30,
-	}, "/tmp", nil)
+	}, "/tmp", nil, "test")
 
 	stage := NewFinalizerStage(FinalizerStageConfig{
 		Runner:           r,
@@ -75,7 +75,7 @@ func TestFinalizerStage_Run_WithValidateFunc(t *testing.T) {
 		Endpoint:     srv.URL,
 		Model:        "test/model",
 		StageTimeout: 30,
-	}, "/tmp", nil)
+	}, "/tmp", nil, "test")
 
 	stage := NewFinalizerStage(FinalizerStageConfig{
 		Runner:           r,
@@ -166,7 +166,7 @@ func TestFinalizerStage_Run_FallbackText(t *testing.T) {
 		Endpoint:     srv.URL,
 		Model:        "test/model",
 		StageTimeout: 30,
-	}, "/tmp", nil)
+	}, "/tmp", nil, "test")
 
 	stage := NewFinalizerStage(FinalizerStageConfig{
 		Runner:           r,

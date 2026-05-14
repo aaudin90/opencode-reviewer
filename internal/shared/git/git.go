@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -127,16 +128,52 @@ func (c *Client) CheckoutRemote(branch string) error {
 }
 
 // Clean unstages all changes, resets tracked files and removes untracked files.
-func (c *Client) Clean() error {
+func (c *Client) Clean(excludePaths ...string) error {
 	if _, err := c.run("reset", "--hard", "HEAD"); err != nil {
 		return fmt.Errorf("git reset: %w", err)
 	}
 
-	if _, err := c.run("clean", "-fd"); err != nil {
+	args := []string{"clean", "-fd"}
+	for _, path := range cleanExcludePatterns(c.dir, excludePaths) {
+		args = append(args, "-e", path)
+	}
+	if _, err := c.run(args...); err != nil {
 		return fmt.Errorf("git clean: %w", err)
 	}
 
 	return nil
+}
+
+func cleanExcludePatterns(root string, paths []string) []string {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	patterns := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+		pathAbs, err := filepath.Abs(path)
+		if err != nil {
+			continue
+		}
+		rel, err := filepath.Rel(rootAbs, pathAbs)
+		if err != nil {
+			continue
+		}
+		pattern := filepath.ToSlash(filepath.Clean(rel))
+		if pattern == "." || pattern == ".." || strings.HasPrefix(pattern, "../") {
+			continue
+		}
+		if _, ok := seen[pattern]; ok {
+			continue
+		}
+		seen[pattern] = struct{}{}
+		patterns = append(patterns, pattern)
+	}
+	return patterns
 }
 
 func (c *Client) run(args ...string) (string, error) {

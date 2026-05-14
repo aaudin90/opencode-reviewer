@@ -106,6 +106,7 @@ func (l *Loader) LoadRuntime(_ context.Context) (*RuntimeResources, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve project dir: %w", err)
 	}
+	cfg.OpenCode.LogDir = config.ResolveOpenCodeLogDir(cfg.OpenCode.LogDir, projectDir)
 	ws, err := workspace.NewAgent(workspace.Config{
 		ProviderJSON:  providerJSON,
 		Model:         cfg.OpenCode.Model,
@@ -122,7 +123,7 @@ func (l *Loader) LoadRuntime(_ context.Context) (*RuntimeResources, error) {
 		return nil, fmt.Errorf("create comment-warrior workspace: %w", err)
 	}
 	return &RuntimeResources{
-		Runner:         runner.New(cfg.OpenCode, projectDir, ws),
+		Runner:         runner.New(cfg.OpenCode, projectDir, ws, "comment-warrior"),
 		FindingMessage: findingMessage,
 		MentionMessage: mentionMessage,
 		Cleanup:        ws.Cleanup,

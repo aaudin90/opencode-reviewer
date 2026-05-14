@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,18 +47,25 @@ type Runner struct {
 	proc       *exec.Cmd
 	baseURL    string
 	procDone   chan error
+	name       string
+	logPath    string
+	logFile    *os.File
 }
 
 // New creates a Runner for the given config and working directory.
 // For subprocess mode (cfg.Endpoint == ""), baseURL is set in StartServe after
 // a free port is allocated; cfg.Port is used as a hint (or default 4096 as fallback).
-func New(cfg config.OpenCodeConfig, workDir string, ws *workspace.Workspace) *Runner {
+func New(cfg config.OpenCodeConfig, workDir string, ws *workspace.Workspace, name string) *Runner {
+	if name == "" {
+		name = "opencode"
+	}
 	r := &Runner{
 		cfg:        cfg,
 		workDir:    workDir,
 		ws:         ws,
 		httpClient: &http.Client{},
 		procDone:   make(chan error, 1),
+		name:       name,
 	}
 	if cfg.Endpoint != "" {
 		r.baseURL = strings.TrimRight(cfg.Endpoint, "/")
@@ -81,7 +89,7 @@ func (r *Runner) StartServe(ctx context.Context) error {
 	}
 	r.baseURL = fmt.Sprintf("http://localhost:%d", port)
 
-	cmd := exec.CommandContext(ctx, r.cfg.Binary, "serve", "--port", strconv.Itoa(port)) // #nosec G204 -- binary from trusted config
+	cmd := exec.CommandContext(ctx, r.cfg.Binary, r.serveArgs(port)...) // #nosec G204 -- binary from trusted config
 	cmd.Dir = r.workDir
 	cmd.Env = os.Environ()
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // isolate into its own process group
@@ -93,18 +101,34 @@ func (r *Runner) StartServe(ctx context.Context) error {
 			"XDG_CONFIG_HOME", r.ws.Dir(),
 		)
 	}
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
+	output, err := r.processOutput(port)
+	if err != nil {
+		return err
+	}
+	cmd.Stdout = output
+	cmd.Stderr = output
 
-	slog.Info("starting opencode serve", "binary", r.cfg.Binary, "workDir", r.workDir, "port", port)
+	slog.Info("starting opencode serve",
+		"binary", r.cfg.Binary,
+		"workDir", r.workDir,
+		"port", port,
+		"print_logs", r.cfg.PrintLogs,
+		"log_level", r.cfg.LogLevel,
+		"log_path", r.logPath,
+	)
 
 	if err := cmd.Start(); err != nil {
+		_ = r.closeLogFile()
 		return fmt.Errorf("start opencode serve: %w", err)
 	}
 	r.proc = cmd
 
 	go func() {
-		r.procDone <- cmd.Wait()
+		waitErr := cmd.Wait()
+		if closeErr := r.closeLogFile(); waitErr == nil && closeErr != nil {
+			waitErr = closeErr
+		}
+		r.procDone <- waitErr
 	}()
 
 	healthCtx, cancel := context.WithTimeout(ctx, healthTimeout)
@@ -121,6 +145,48 @@ func (r *Runner) StartServe(ctx context.Context) error {
 
 	slog.Info("opencode serve is healthy")
 	return nil
+}
+
+func (r *Runner) serveArgs(port int) []string {
+	args := []string{"serve", "--port", strconv.Itoa(port)}
+	if r.cfg.PrintLogs {
+		args = append(args, "--print-logs")
+	}
+	if r.cfg.LogLevel != "" {
+		args = append(args, "--log-level", r.cfg.LogLevel)
+	}
+	return args
+}
+
+func (r *Runner) processOutput(port int) (io.Writer, error) {
+	if !r.cfg.PrintLogs {
+		return os.Stderr, nil
+	}
+	logDir := config.ResolveOpenCodeLogDir(r.cfg.LogDir, r.workDir)
+	if err := os.MkdirAll(logDir, 0o750); err != nil {
+		return nil, fmt.Errorf("create opencode log dir: %w", err)
+	}
+	path := filepath.Join(logDir, fmt.Sprintf("%s-%s-%d.log", r.name, time.Now().Format("20060102-150405"), port))
+	file, err := os.OpenFile(filepath.Clean(path), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("create opencode log file: %w", err)
+	}
+	r.logPath = path
+	r.logFile = file
+	return file, nil
+}
+
+func (r *Runner) LogPath() string {
+	return r.logPath
+}
+
+func (r *Runner) closeLogFile() error {
+	if r.logFile == nil {
+		return nil
+	}
+	err := r.logFile.Close()
+	r.logFile = nil
+	return err
 }
 
 func schemaRetryPromptFor(toolName string, validationErr error, schemaHint string) string {

@@ -55,6 +55,9 @@ Config file (TOML) sections:
     stage_timeout           Timeout per stage in seconds (default: 600)
     max_steps               Max agent steps per session (default: 50)
     min_version             Minimum required opencode version (semver)
+    print_logs              Pass --print-logs to opencode serve
+    log_level               Pass --log-level to opencode serve (DEBUG, INFO, WARN, ERROR)
+    log_dir                 Directory for OpenCode stdout/stderr log files when print_logs is enabled
     provider_config_path    Path to provider JSON config (relative to config base dir or absolute)
 
   [git]
@@ -96,6 +99,9 @@ Environment variables:
   OR_OPENCODE_STAGE_TIMEOUT    Timeout per stage in seconds (overrides opencode.stage_timeout)
   OR_OPENCODE_MAX_STEPS        Max agent steps per session (overrides opencode.max_steps)
   OR_OPENCODE_MIN_VERSION      Minimum opencode version (overrides opencode.min_version)
+  OR_OPENCODE_PRINT_LOGS       Pass --print-logs to opencode serve (true/1)
+  OR_OPENCODE_LOG_LEVEL        Pass --log-level to opencode serve (DEBUG, INFO, WARN, ERROR)
+  OR_OPENCODE_LOG_DIR          OpenCode log directory (default: opencode-review-logs)
   OR_PROVIDER_CONFIG_PATH      Deprecated: path to provider JSON file (ignored when config-dir is active)
   OR_PROVIDER_CONFIG           Deprecated: inline provider JSON config (ignored when config-dir is active)
   OR_AGENT_PROMPT_PATH         Deprecated: path to reviewer agent prompt file (ignored when config-dir is active)
@@ -223,7 +229,18 @@ func run(cfg *config.Config, cli CLI, configBaseDir string) error {
 
 	ctx := context.Background()
 	_, err = p.Run(ctx)
+	printOpenCodeLogPaths(p.LogPaths())
 	return err
+}
+
+func printOpenCodeLogPaths(paths []string) {
+	if len(paths) == 0 {
+		return
+	}
+	fmt.Fprintln(os.Stdout, "OpenCode log files:")
+	for _, path := range paths {
+		fmt.Fprintln(os.Stdout, path)
+	}
 }
 
 // initSlog configures the global slog logger.

@@ -145,6 +145,9 @@ project_dir = "/path/to/project"
   # Prefer setting model in provider.json.
   # model = "llm-proxy/kimi-k2.5"
   max_steps = 50
+  print_logs = false
+  # log_level = "DEBUG"
+  log_dir = "opencode-review-logs"
 
 [git]
   remote = "origin"
@@ -193,6 +196,9 @@ Common env vars:
 | `OR_PROJECT_DIR` | Project repository path |
 | `OR_BRANCH` | Branch to review |
 | `OR_OPENCODE_MODEL` | LLM model identifier |
+| `OR_OPENCODE_PRINT_LOGS` | Pass `--print-logs` to `opencode serve` with `true` or `1` |
+| `OR_OPENCODE_LOG_LEVEL` | Pass `--log-level` to `opencode serve`: `DEBUG`, `INFO`, `WARN`, or `ERROR` |
+| `OR_OPENCODE_LOG_DIR` | OpenCode log directory; relative paths are resolved under `project_dir` |
 | `OR_GITLAB_URL` | GitLab instance URL |
 | `OR_GITLAB_TOKEN` | GitLab private access token |
 | `OR_GITLAB_PROJECT_ID` | Numeric GitLab project ID |
@@ -203,6 +209,21 @@ Common env vars:
 | `OR_SLOG_LEVEL` | Log level: `debug`, `info`, `warn`, `error` |
 
 Deprecated fallback env vars such as `OR_PROVIDER_CONFIG_PATH`, `OR_PROVIDER_CONFIG`, `OR_AGENT_PROMPT_PATH`, `OR_MESSAGE_PATHS`, and finalizer/sub-agent prompt env vars are ignored when config-dir mode is active.
+
+For CI log artifacts:
+
+```yaml
+variables:
+  OR_OPENCODE_PRINT_LOGS: "true"
+  OR_OPENCODE_LOG_LEVEL: "INFO"
+  OR_OPENCODE_LOG_DIR: "opencode-review-logs"
+
+artifacts:
+  when: always
+  paths:
+    - opencode-review-logs/
+  expire_in: 7 days
+```
 
 ## Development
 
