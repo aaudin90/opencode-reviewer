@@ -39,7 +39,7 @@ func TestReviewStage_Run_SingleSuccess(t *testing.T) {
 		Endpoint:     srv.URL,
 		Model:        "test/model",
 		StageTimeout: 30,
-	}, "/tmp", nil)
+	}, "/tmp", nil, "test")
 
 	stage := NewReviewStage(ReviewStageConfig{
 		Runner:   r,
@@ -133,7 +133,7 @@ func TestReviewStage_Run_AllSessionsFail(t *testing.T) {
 		Endpoint:     srv.URL,
 		Model:        "test/model",
 		StageTimeout: 10,
-	}, "/tmp", nil)
+	}, "/tmp", nil, "test")
 
 	stage := NewReviewStage(ReviewStageConfig{
 		Runner:   r,
@@ -226,7 +226,7 @@ func TestReviewStage_Run_WithValidateFunc(t *testing.T) {
 		Endpoint:     srv.URL,
 		Model:        "test/model",
 		StageTimeout: 30,
-	}, "/tmp", nil)
+	}, "/tmp", nil, "test")
 
 	stage := NewReviewStage(ReviewStageConfig{
 		Runner:   r,

@@ -56,6 +56,7 @@ func (l *Loader) LoadRuntime(_ context.Context) (*pipeline.RuntimeResources, err
 	if err != nil {
 		return nil, fmt.Errorf("resolve project dir: %w", err)
 	}
+	cfg.OpenCode.LogDir = config.ResolveOpenCodeLogDir(cfg.OpenCode.LogDir, projectDir)
 
 	providerPath := resolveRelativePath(resolutionBaseDir, cfg.OpenCode.ProviderConfigPath)
 	providerJSON, err := providerconfig.LoadWithOptions(providerPath, providerconfig.Options{
@@ -180,8 +181,8 @@ func (l *Loader) LoadRuntime(_ context.Context) (*pipeline.RuntimeResources, err
 	}
 
 	return &pipeline.RuntimeResources{
-		ReviewerRunner:   runner.New(cfg.OpenCode, projectDir, reviewerWS),
-		FinalizerRunner:  runner.New(cfg.OpenCode, projectDir, finalizerWS),
+		ReviewerRunner:   runner.New(cfg.OpenCode, projectDir, reviewerWS, "reviewer"),
+		FinalizerRunner:  runner.New(cfg.OpenCode, projectDir, finalizerWS, "finalizer"),
 		Messages:         messages,
 		FinalizerMessage: finalizerMessage,
 		Cleanup: func() error {

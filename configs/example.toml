@@ -19,6 +19,9 @@
 #   OR_OPENCODE_STAGE_TIMEOUT    Timeout per stage in seconds
 #   OR_OPENCODE_MAX_STEPS        Max agent steps per session
 #   OR_OPENCODE_MIN_VERSION      Minimum opencode version
+#   OR_OPENCODE_PRINT_LOGS       Pass --print-logs to opencode serve
+#   OR_OPENCODE_LOG_LEVEL        Pass --log-level to opencode serve (DEBUG, INFO, WARN, ERROR)
+#   OR_OPENCODE_LOG_DIR          OpenCode log directory
 #   OR_PROVIDER_CONFIG_PATH      Deprecated fallback: path to provider JSON file
 #   OR_PROVIDER_CONFIG           Deprecated fallback: inline provider JSON config
 #   OR_AGENT_PROMPT_PATH         Deprecated fallback: path to reviewer agent prompt file
@@ -77,6 +80,20 @@ project_dir = "/path/to/your/project"
   # max_steps: maximum agent steps per review session.
   # Default: 50.
   max_steps = 50
+
+  # print_logs: pass --print-logs to opencode serve.
+  # Env: OR_OPENCODE_PRINT_LOGS
+  print_logs = false
+
+  # log_level: pass --log-level to opencode serve when set.
+  # Valid values: DEBUG, INFO, WARN, ERROR.
+  # Env: OR_OPENCODE_LOG_LEVEL
+  # log_level = "DEBUG"
+
+  # log_dir: directory for OpenCode stdout/stderr log files when print_logs is true.
+  # Relative paths are resolved under project_dir. Default: opencode-review-logs.
+  # Env: OR_OPENCODE_LOG_DIR
+  log_dir = "opencode-review-logs"
 
   # provider_config_path: path to provider JSON config (relative to this file or absolute).
   # Deprecated env fallback when config-dir is inactive: OR_PROVIDER_CONFIG_PATH.

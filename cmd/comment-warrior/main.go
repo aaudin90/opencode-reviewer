@@ -60,6 +60,9 @@ Environment variables:
   OR_COMMENT_WARRIOR_AGENT_PROMPT_PATH  Deprecated fallback when config-dir is inactive
   OR_COMMENT_WARRIOR_FINDING_MESSAGE_PATH  Deprecated fallback finding message path
   OR_COMMENT_WARRIOR_MENTION_MESSAGE_PATH  Deprecated fallback mention message path
+  OR_OPENCODE_PRINT_LOGS                Pass --print-logs to opencode serve (true/1)
+  OR_OPENCODE_LOG_LEVEL                 Pass --log-level to opencode serve (DEBUG, INFO, WARN, ERROR)
+  OR_OPENCODE_LOG_DIR                   OpenCode log directory (default: opencode-review-logs)
 
 Priority (branch): --branch > OR_BRANCH > CI_MERGE_REQUEST_SOURCE_BRANCH_NAME > git.branch TOML.
 Priority (MR IID): --mr-iid > OR_COMMENT_WARRIOR_MR_IID > CI_MERGE_REQUEST_IID.`),
@@ -128,7 +131,19 @@ func run(ctx context.Context, cfg *config.Config, cli CLI, configBaseDir string,
 		MaxDiscussions: cli.MaxDiscussions,
 		DiscussionID:   cli.DiscussionID,
 	}, gitClient, client, loader)
-	return pipeline.Run(ctx)
+	err = pipeline.Run(ctx)
+	printOpenCodeLogPaths(pipeline.LogPaths())
+	return err
+}
+
+func printOpenCodeLogPaths(paths []string) {
+	if len(paths) == 0 {
+		return
+	}
+	fmt.Fprintln(os.Stdout, "OpenCode log files:")
+	for _, path := range paths {
+		fmt.Fprintln(os.Stdout, path)
+	}
 }
 
 func applyBranchPriority(cfg *config.Config, flag string) {

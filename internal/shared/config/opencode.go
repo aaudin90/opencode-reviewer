@@ -9,4 +9,7 @@ type OpenCodeConfig struct {
 	MaxSteps           int    `toml:"max_steps"`
 	ProviderConfigPath string `toml:"provider_config_path"`
 	MinVersion         string `toml:"min_version"`
+	PrintLogs          bool   `toml:"print_logs"`
+	LogLevel           string `toml:"log_level"`
+	LogDir             string `toml:"log_dir"`
 }

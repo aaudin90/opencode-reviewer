@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	commentwarriorruntime "github.com/aaudin90/opencode-reviewer/internal/commentwarrior/runtime"
@@ -21,6 +22,7 @@ type Pipeline struct {
 	git    *git.Client
 	gitlab *gitlabvcs.Client
 	loader RuntimeLoader
+	runner *runner.Runner
 }
 
 func NewPipeline(cfg PipelineConfig, gitClient *git.Client, gitlabClient *gitlabvcs.Client, loader RuntimeLoader) *Pipeline {
@@ -37,7 +39,7 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		return fmt.Errorf("prepare repository: %w", err)
 	}
 	defer func() {
-		if err := p.git.Clean(); err != nil {
+		if err := p.git.Clean(p.logDirs()...); err != nil {
 			slog.Warn("failed to clean working tree", "error", err)
 		}
 	}()
@@ -63,6 +65,21 @@ func (p *Pipeline) Run(ctx context.Context) error {
 	}
 	slog.Info("comment-warrior completed", "processed", processed)
 	return nil
+}
+
+func (p *Pipeline) LogPaths() []string {
+	if p.runner == nil || p.runner.LogPath() == "" {
+		return nil
+	}
+	return []string{p.runner.LogPath()}
+}
+
+func (p *Pipeline) logDirs() []string {
+	paths := p.LogPaths()
+	if len(paths) == 0 {
+		return nil
+	}
+	return []string{filepath.Dir(paths[0])}
 }
 
 func (p *Pipeline) processableDiscussions(ctx context.Context) ([]processableDiscussion, error) {
@@ -91,6 +108,7 @@ func (p *Pipeline) runProcessableDiscussions(ctx context.Context, processable []
 	if err := resources.Runner.StartServe(ctx); err != nil {
 		return 0, fmt.Errorf("start opencode: %w", err)
 	}
+	p.runner = resources.Runner
 	defer resources.Runner.StopServe()
 	if err := resources.Runner.Precheck(ctx, "comment-warrior"); err != nil {
 		return 0, fmt.Errorf("precheck: %w", err)

@@ -156,7 +156,7 @@ func TestRunDecisionRetriesEmptyResolveBody(t *testing.T) {
 		Endpoint:     srv.URL,
 		Model:        "test/model",
 		StageTimeout: 30,
-	}, t.TempDir(), nil)
+	}, t.TempDir(), nil, "test")
 
 	decision, err := runDecision(context.Background(), r, "handle this discussion", "1")
 	if err != nil {

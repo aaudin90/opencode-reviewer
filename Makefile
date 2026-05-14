@@ -3,7 +3,7 @@ COMMENT_WARRIOR_BINARY := opencode-reviewer-comment-warrior
 BUILD_DIR := ./build
 MAIN := ./cmd/reviewer
 COMMENT_WARRIOR_MAIN := ./cmd/comment-warrior
-export GOTOOLCHAIN := go1.26.2
+export GOTOOLCHAIN := go1.26.3
 
 .PHONY: dev-config run build review test linter tools deps clean
 

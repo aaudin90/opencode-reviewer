@@ -225,6 +225,70 @@ func TestClean(t *testing.T) {
 	}
 }
 
+func TestClean_ExcludesLogDir(t *testing.T) {
+	client, workDir := setupRepo(t)
+
+	logDir := filepath.Join(workDir, "opencode-review-logs")
+	if err := os.MkdirAll(logDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	logFile := filepath.Join(logDir, "reviewer.log")
+	if err := os.WriteFile(logFile, []byte("logs\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	untrackedFile := filepath.Join(workDir, "untracked.txt")
+	if err := os.WriteFile(untrackedFile, []byte("untracked\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := client.Clean(logDir); err != nil {
+		t.Fatalf("Clean() returned error: %v", err)
+	}
+	if _, err := os.Stat(logFile); err != nil {
+		t.Fatalf("expected log file to survive Clean(): %v", err)
+	}
+	if _, err := os.Stat(untrackedFile); !os.IsNotExist(err) {
+		t.Fatal("expected unrelated untracked file to be removed")
+	}
+}
+
+func TestClean_ExcludesDotDotNamedLogDir(t *testing.T) {
+	client, workDir := setupRepo(t)
+
+	logDir := filepath.Join(workDir, "..logs")
+	if err := os.MkdirAll(logDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	logFile := filepath.Join(logDir, "reviewer.log")
+	if err := os.WriteFile(logFile, []byte("logs\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	untrackedFile := filepath.Join(workDir, "untracked.txt")
+	if err := os.WriteFile(untrackedFile, []byte("untracked\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := client.Clean(logDir); err != nil {
+		t.Fatalf("Clean() returned error: %v", err)
+	}
+	if _, err := os.Stat(logFile); err != nil {
+		t.Fatalf("expected ..logs file to survive Clean(): %v", err)
+	}
+	if _, err := os.Stat(untrackedFile); !os.IsNotExist(err) {
+		t.Fatal("expected unrelated untracked file to be removed")
+	}
+}
+
+func TestCleanExcludePatterns_SkipsPathsOutsideRoot(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(filepath.Dir(root), "outside-logs")
+
+	patterns := cleanExcludePatterns(root, []string{outside})
+	if len(patterns) != 0 {
+		t.Fatalf("cleanExcludePatterns() = %v, want empty", patterns)
+	}
+}
+
 func TestDiff(t *testing.T) {
 	client, workDir := setupRepo(t)
 

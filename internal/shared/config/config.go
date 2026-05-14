@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 
 	"github.com/BurntSushi/toml"
@@ -58,6 +59,10 @@ func applyDefaults(cfg *Config) {
 	if cfg.Git.BaseBranch == "" {
 		cfg.Git.BaseBranch = "main"
 	}
+
+	if cfg.OpenCode.LogDir == "" {
+		cfg.OpenCode.LogDir = "opencode-review-logs"
+	}
 }
 
 // ApplyEnvOverrides overrides config values with environment variables.
@@ -74,6 +79,9 @@ func applyDefaults(cfg *Config) {
 //	OR_OPENCODE_STAGE_TIMEOUT    → opencode.stage_timeout
 //	OR_OPENCODE_MAX_STEPS        → opencode.max_steps
 //	OR_OPENCODE_MIN_VERSION      → opencode.min_version
+//	OR_OPENCODE_PRINT_LOGS       → opencode.print_logs
+//	OR_OPENCODE_LOG_LEVEL        → opencode.log_level
+//	OR_OPENCODE_LOG_DIR          → opencode.log_dir
 //	OR_GIT_REMOTE                → git.remote
 //	OR_BRANCH                    → git.branch
 //	OR_GIT_BASE_BRANCH           → git.base_branch
@@ -120,6 +128,18 @@ func ApplyEnvOverrides(cfg *Config) {
 		cfg.OpenCode.MinVersion = v
 	}
 
+	if v := os.Getenv("OR_OPENCODE_PRINT_LOGS"); v != "" {
+		cfg.OpenCode.PrintLogs = parseBool(v)
+	}
+
+	if v := os.Getenv("OR_OPENCODE_LOG_LEVEL"); v != "" {
+		cfg.OpenCode.LogLevel = v
+	}
+
+	if v := os.Getenv("OR_OPENCODE_LOG_DIR"); v != "" {
+		cfg.OpenCode.LogDir = v
+	}
+
 	if v := os.Getenv("OR_GIT_REMOTE"); v != "" {
 		cfg.Git.Remote = v
 	}
@@ -147,6 +167,20 @@ func ApplyEnvOverrides(cfg *Config) {
 	}
 
 	if v := os.Getenv("OR_GITLAB_CLEAR_COMMENTS"); v != "" {
-		cfg.GitLab.ClearComments = v == "true" || v == "1"
+		cfg.GitLab.ClearComments = parseBool(v)
 	}
+}
+
+func parseBool(v string) bool {
+	return v == "true" || v == "1"
+}
+
+func ResolveOpenCodeLogDir(logDir, projectDir string) string {
+	if logDir == "" {
+		logDir = "opencode-review-logs"
+	}
+	if filepath.IsAbs(logDir) {
+		return filepath.Clean(logDir)
+	}
+	return filepath.Join(projectDir, logDir)
 }

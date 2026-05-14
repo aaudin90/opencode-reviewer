@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/aaudin90/opencode-reviewer/internal/review/agentsmd"
@@ -83,12 +84,37 @@ func (p *Pipeline) Run(ctx context.Context) (*models.FinalReview, error) {
 	}
 	slog.Info("repository prepared for review")
 	defer func() {
-		if cleanErr := p.gitClient.Clean(); cleanErr != nil {
+		if cleanErr := p.gitClient.Clean(p.logDirs()...); cleanErr != nil {
 			slog.Error("failed to clean working tree", "error", cleanErr)
 		}
 	}()
 
 	return p.RunPrepared(ctx)
+}
+
+func (p *Pipeline) LogPaths() []string {
+	var paths []string
+	if p.reviewStage != nil && p.reviewStage.runner != nil && p.reviewStage.runner.LogPath() != "" {
+		paths = append(paths, p.reviewStage.runner.LogPath())
+	}
+	if p.finalizerStage != nil && p.finalizerStage.runner != nil && p.finalizerStage.runner.LogPath() != "" {
+		paths = append(paths, p.finalizerStage.runner.LogPath())
+	}
+	return paths
+}
+
+func (p *Pipeline) logDirs() []string {
+	seen := make(map[string]struct{})
+	var dirs []string
+	for _, path := range p.LogPaths() {
+		dir := filepath.Dir(path)
+		if _, ok := seen[dir]; ok {
+			continue
+		}
+		seen[dir] = struct{}{}
+		dirs = append(dirs, dir)
+	}
+	return dirs
 }
 
 func (p *Pipeline) RunPrepared(ctx context.Context) (*models.FinalReview, error) {

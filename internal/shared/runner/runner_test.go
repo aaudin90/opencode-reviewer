@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,7 +19,7 @@ import (
 
 // newTestRunner creates a Runner with nil workspace for tests using external endpoint.
 func newTestRunner(cfg config.OpenCodeConfig) *Runner {
-	return New(cfg, "/tmp", nil)
+	return New(cfg, "/tmp", nil, "test")
 }
 
 // collectRunResult drains a RunEvent channel and returns the final RunResult or error.
@@ -105,6 +107,87 @@ func TestWaitHealthy_Timeout(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "timed out") {
 		t.Errorf("error = %v, want timed out", err)
+	}
+}
+
+func TestServeArgs_WithOpenCodeLogs(t *testing.T) {
+	r := newTestRunner(config.OpenCodeConfig{
+		PrintLogs: true,
+		LogLevel:  "DEBUG",
+	})
+
+	got := strings.Join(r.serveArgs(4097), " ")
+	want := "serve --port 4097 --print-logs --log-level DEBUG"
+	if got != want {
+		t.Fatalf("serveArgs = %q, want %q", got, want)
+	}
+}
+
+func TestStartServeWritesProcessOutputToLogFile(t *testing.T) {
+	if os.Getenv("OR_TEST_HELPER_OPENCODE_SERVE") == "1" {
+		helperOpenCodeServe()
+		return
+	}
+
+	dir := t.TempDir()
+	script := filepath.Join(dir, "fake-opencode")
+	body := fmt.Sprintf("#!/bin/sh\nexec %q -test.run=TestStartServeWritesProcessOutputToLogFile -- \"$@\"\n", os.Args[0])
+	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OR_TEST_HELPER_OPENCODE_SERVE", "1")
+
+	r := New(config.OpenCodeConfig{
+		Binary:    script,
+		PrintLogs: true,
+		LogLevel:  "INFO",
+		LogDir:    "logs",
+	}, dir, nil, "reviewer")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := r.StartServe(ctx); err != nil {
+		t.Fatalf("StartServe: %v", err)
+	}
+	r.StopServe()
+
+	logPath := r.LogPath()
+	if logPath == "" {
+		t.Fatal("LogPath is empty")
+	}
+	if !strings.Contains(filepath.Base(logPath), "reviewer-") {
+		t.Fatalf("log path = %q, want reviewer prefix", logPath)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log file: %v", err)
+	}
+	got := string(data)
+	if !strings.Contains(got, "fake stdout") || !strings.Contains(got, "fake stderr") {
+		t.Fatalf("log file = %q, want stdout and stderr", got)
+	}
+}
+
+func helperOpenCodeServe() {
+	args := os.Args
+	port := ""
+	for i, arg := range args {
+		if arg == "--port" && i+1 < len(args) {
+			port = args[i+1]
+			break
+		}
+	}
+	if port == "" {
+		os.Exit(2)
+	}
+	fmt.Fprintln(os.Stdout, "fake stdout")
+	fmt.Fprintln(os.Stderr, "fake stderr")
+	mux := http.NewServeMux()
+	mux.HandleFunc("/global/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	if err := http.ListenAndServe("127.0.0.1:"+port, mux); err != nil {
+		os.Exit(1)
 	}
 }
 
