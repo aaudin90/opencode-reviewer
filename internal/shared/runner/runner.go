@@ -94,11 +94,20 @@ func (r *Runner) StartServe(ctx context.Context) error {
 	cmd.Env = os.Environ()
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // isolate into its own process group
 	if r.ws != nil {
+		bunInstallCacheDir := filepath.Join(r.ws.CacheDir(), "bun", "install", "cache")
 		cmd.Env = append(cmd.Env,
 			"XDG_CONFIG_HOME="+r.ws.Dir(),
+			"XDG_CACHE_HOME="+r.ws.CacheDir(),
+			"XDG_DATA_HOME="+r.ws.DataDir(),
+			"XDG_STATE_HOME="+r.ws.StateDir(),
+			"BUN_INSTALL_CACHE_DIR="+bunInstallCacheDir,
 		)
 		slog.Info("workspace configured",
 			"XDG_CONFIG_HOME", r.ws.Dir(),
+			"XDG_CACHE_HOME", r.ws.CacheDir(),
+			"XDG_DATA_HOME", r.ws.DataDir(),
+			"XDG_STATE_HOME", r.ws.StateDir(),
+			"BUN_INSTALL_CACHE_DIR", bunInstallCacheDir,
 		)
 	}
 	output, err := r.processOutput(port)

@@ -199,6 +199,7 @@ Common env vars:
 | `OR_OPENCODE_PRINT_LOGS` | Pass `--print-logs` to `opencode serve` with `true` or `1` |
 | `OR_OPENCODE_LOG_LEVEL` | Pass `--log-level` to `opencode serve`: `DEBUG`, `INFO`, `WARN`, or `ERROR` |
 | `OR_OPENCODE_LOG_DIR` | OpenCode log directory; relative paths are resolved under `project_dir` |
+| `OR_OPENCODE_KEEP_XDG_DIRS` | Keep temporary OpenCode XDG dirs after the run for debugging with `true` or `1` |
 | `OR_GITLAB_URL` | GitLab instance URL |
 | `OR_GITLAB_TOKEN` | GitLab private access token |
 | `OR_GITLAB_PROJECT_ID` | Numeric GitLab project ID |

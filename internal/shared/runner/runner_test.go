@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/aaudin90/opencode-reviewer/internal/shared/config"
+	"github.com/aaudin90/opencode-reviewer/internal/shared/workspace"
 )
 
 // newTestRunner creates a Runner with nil workspace for tests using external endpoint.
@@ -168,6 +169,62 @@ func TestStartServeWritesProcessOutputToLogFile(t *testing.T) {
 	}
 }
 
+func TestStartServeSetsXDGDirs(t *testing.T) {
+	if os.Getenv("OR_TEST_HELPER_OPENCODE_SERVE") == "1" {
+		helperOpenCodeServe()
+		return
+	}
+
+	dir := t.TempDir()
+	script := filepath.Join(dir, "fake-opencode")
+	body := fmt.Sprintf("#!/bin/sh\nexec %q -test.run=TestStartServeSetsXDGDirs -- \"$@\"\n", os.Args[0])
+	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OR_TEST_HELPER_OPENCODE_SERVE", "1")
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, ".config"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(dir, ".cache"))
+	t.Setenv("BUN_INSTALL_CACHE_DIR", filepath.Join(dir, ".bun", "install", "cache"))
+
+	ws, err := workspace.NewAgent(workspace.Config{Model: "test/model"}, workspace.AgentSpec{})
+	if err != nil {
+		t.Fatalf("NewAgent: %v", err)
+	}
+	defer func() { _ = ws.Cleanup() }()
+
+	r := New(config.OpenCodeConfig{
+		Binary:    script,
+		PrintLogs: true,
+		LogLevel:  "INFO",
+		LogDir:    "logs",
+	}, dir, ws, "reviewer")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := r.StartServe(ctx); err != nil {
+		t.Fatalf("StartServe: %v", err)
+	}
+	r.StopServe()
+
+	data, err := os.ReadFile(r.LogPath())
+	if err != nil {
+		t.Fatalf("read log file: %v", err)
+	}
+	got := string(data)
+	for name, want := range map[string]string{
+		"XDG_CONFIG_HOME":       ws.Dir(),
+		"XDG_CACHE_HOME":        ws.CacheDir(),
+		"XDG_DATA_HOME":         ws.DataDir(),
+		"XDG_STATE_HOME":        ws.StateDir(),
+		"BUN_INSTALL_CACHE_DIR": filepath.Join(ws.CacheDir(), "bun", "install", "cache"),
+	} {
+		if !strings.Contains(got, name+"="+want) {
+			t.Fatalf("log file missing %s=%s:\n%s", name, want, got)
+		}
+	}
+}
+
 func helperOpenCodeServe() {
 	args := os.Args
 	port := ""
@@ -182,6 +239,9 @@ func helperOpenCodeServe() {
 	}
 	fmt.Fprintln(os.Stdout, "fake stdout")
 	fmt.Fprintln(os.Stderr, "fake stderr")
+	for _, name := range []string{"XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "BUN_INSTALL_CACHE_DIR"} {
+		fmt.Fprintf(os.Stdout, "%s=%s\n", name, os.Getenv(name))
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/global/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)

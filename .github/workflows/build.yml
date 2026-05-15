@@ -48,6 +48,8 @@ jobs:
           file: images/Dockerfile.base
           context: .
           platforms: linux/amd64,linux/arm64
+          secrets: |
+            deepseek_api_key=${{ secrets.DEEPSEEK_API_KEY }}
           push: ${{ github.event_name == 'push' }}
           tags: |
             ghcr.io/aaudin90/opencode-reviewer/base:${{ github.sha }}
