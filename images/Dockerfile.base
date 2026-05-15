@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1.7
+
 FROM golang:1.26-bookworm AS builder
 
 WORKDIR /app
@@ -14,22 +16,64 @@ FROM almalinux:9-minimal
 RUN microdnf install -y git ca-certificates tar net-tools && microdnf clean all
 
 ARG TARGETARCH
+ARG OPENCODE_VERSION=1.14.50
 RUN case "${TARGETARCH}" in \
     amd64) ARCH=x64 ;; \
     arm64) ARCH=arm64 ;; \
     *) echo "Unsupported arch: ${TARGETARCH}" && exit 1 ;; \
   esac && \
-  curl -fsSL "https://github.com/anomalyco/opencode/releases/download/v1.14.24/opencode-linux-${ARCH}.tar.gz" \
+  curl -fsSL "https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/opencode-linux-${ARCH}.tar.gz" \
     | tar -xzC /usr/local/bin && \
   chmod +x /usr/local/bin/opencode
-
-COPY --from=builder /app/build/opencode-reviewer /usr/local/bin/opencode-reviewer
-COPY --from=builder /app/build/opencode-reviewer-comment-warrior /usr/local/bin/opencode-reviewer-comment-warrior
 
 ENV OPENCODE_DISABLE_AUTOUPDATE=true \
     OPENCODE_DISABLE_MODELS_FETCH=true \
     OPENCODE_DISABLE_DEFAULT_PLUGINS=true \
     OPENCODE_DISABLE_LSP_DOWNLOAD=true
+
+COPY images/opencode-warmup.deepseek.json /tmp/opencode-warmup.deepseek.json
+COPY internal/review/runtime/tools/submit_review.ts /tmp/opencode-warmup-submit_review.ts
+
+RUN --mount=type=secret,id=deepseek_api_key,required=false set -eux; \
+  mkdir -p /root/.config/opencode/tools /root/.bun/install/cache; \
+  cp /tmp/opencode-warmup.deepseek.json /root/.config/opencode/opencode.json; \
+  cp /tmp/opencode-warmup-submit_review.ts /root/.config/opencode/tools/submit_review.ts; \
+  printf 'OPENCODE_DISABLE_AUTOUPDATE\n' >/tmp/opencode-warmup-grep.txt; \
+  if [ -f /run/secrets/deepseek_api_key ]; then \
+    DEEPSEEK_API_KEY="$(cat /run/secrets/deepseek_api_key)"; \
+  else \
+    DEEPSEEK_API_KEY=opencode-warmup-placeholder; \
+  fi; \
+  export DEEPSEEK_API_KEY; \
+  export BUN_INSTALL_CACHE_DIR=/root/.bun/install/cache; \
+  unset OPENCODE_DISABLE_MODELS_FETCH OPENCODE_DISABLE_DEFAULT_PLUGINS; \
+  opencode --version; \
+  WARMUP_STATUS=0; \
+  timeout 180s opencode run \
+    --model deepseek/deepseek-v4-flash \
+    --format json \
+    --dangerously-skip-permissions \
+    "Используй инструмент grep и найди в /tmp/opencode-warmup-grep.txt упоминания OPENCODE_DISABLE_AUTOUPDATE. Ответь кратко: какие файлы найдены." \
+    >/tmp/opencode-warmup.log 2>&1 || WARMUP_STATUS=$?; \
+  echo "===== opencode warmup output ====="; \
+  sed -n '1,200p' /tmp/opencode-warmup.log; \
+  echo "===== end opencode warmup output ====="; \
+  if [ "$WARMUP_STATUS" -ne 0 ]; then echo "opencode warmup exited with status $WARMUP_STATUS"; fi; \
+  echo "===== opencode warmup cache sizes ====="; \
+  du -sh /root/.config/opencode /root/.cache/opencode /root/.bun/install/cache 2>/dev/null || true; \
+  echo "===== end opencode warmup cache sizes ====="; \
+  rm -rf \
+    /root/.config/opencode/opencode.json \
+    /root/.config/opencode/tools \
+    /tmp/opencode-warmup.deepseek.json \
+    /tmp/opencode-warmup-submit_review.ts \
+    /tmp/opencode-warmup-grep.txt \
+    /root/.local/share/opencode \
+    /root/.local/state/opencode \
+    /tmp/opencode-warmup.log
+
+COPY --from=builder /app/build/opencode-reviewer /usr/local/bin/opencode-reviewer
+COPY --from=builder /app/build/opencode-reviewer-comment-warrior /usr/local/bin/opencode-reviewer-comment-warrior
 
 RUN mkdir -p /project
 

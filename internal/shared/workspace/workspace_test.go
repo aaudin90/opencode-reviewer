@@ -8,6 +8,20 @@ import (
 	"testing"
 )
 
+func TestMain(m *testing.M) {
+	home, err := os.MkdirTemp("", "opencode-review-workspace-test-home-*")
+	if err != nil {
+		panic(err)
+	}
+	_ = os.Setenv("HOME", home)
+	_ = os.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	_ = os.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	_ = os.Setenv("BUN_INSTALL_CACHE_DIR", filepath.Join(home, ".bun", "install", "cache"))
+	code := m.Run()
+	_ = os.RemoveAll(home)
+	os.Exit(code)
+}
+
 func newReviewer(cfg Config, prompt string) (*Workspace, error) {
 	return NewAgent(cfg, AgentSpec{
 		Name:         "reviewer",
@@ -369,10 +383,158 @@ func TestCleanup(t *testing.T) {
 	}
 }
 
+func TestCleanup_KeepXDGDirs(t *testing.T) {
+	for _, value := range []string{"true", "1"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("OR_OPENCODE_KEEP_XDG_DIRS", value)
+
+			ws, err := newReviewer(Config{Model: "test/model"}, "")
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			t.Cleanup(func() { _ = os.RemoveAll(ws.Dir()) })
+
+			dir := ws.Dir()
+			if err := ws.Cleanup(); err != nil {
+				t.Fatalf("Cleanup: %v", err)
+			}
+
+			if _, err := os.Stat(dir); err != nil {
+				t.Fatalf("directory should be kept after Cleanup: %v", err)
+			}
+		})
+	}
+}
+
 func TestCleanup_Nil(t *testing.T) {
 	var ws *Workspace
 	if err := ws.Cleanup(); err != nil {
 		t.Fatalf("Cleanup on nil should not error: %v", err)
+	}
+}
+
+func TestXDGDirs(t *testing.T) {
+	ws, err := newReviewer(Config{Model: "test/model"}, "")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer func() { _ = ws.Cleanup() }()
+
+	if got, want := ws.CacheDir(), filepath.Join(ws.Dir(), "cache"); got != want {
+		t.Fatalf("CacheDir = %q, want %q", got, want)
+	}
+	if got, want := ws.DataDir(), filepath.Join(ws.Dir(), "data"); got != want {
+		t.Fatalf("DataDir = %q, want %q", got, want)
+	}
+	if got, want := ws.StateDir(), filepath.Join(ws.Dir(), "state"); got != want {
+		t.Fatalf("StateDir = %q, want %q", got, want)
+	}
+}
+
+func TestNew_SeedsOpenCodeCaches(t *testing.T) {
+	home := t.TempDir()
+	xdgConfig := filepath.Join(home, ".config")
+	xdgCache := filepath.Join(home, ".cache")
+	bunCache := filepath.Join(home, ".bun", "install", "cache")
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", xdgConfig)
+	t.Setenv("XDG_CACHE_HOME", xdgCache)
+	t.Setenv("BUN_INSTALL_CACHE_DIR", bunCache)
+
+	sourceConfig := filepath.Join(xdgConfig, "opencode")
+	writeTestFile(t, filepath.Join(sourceConfig, "node_modules", "pkg", "index.js"), "module")
+	writeTestFile(t, filepath.Join(sourceConfig, "package.json"), `{"name":"opencode"}`)
+	writeTestFile(t, filepath.Join(sourceConfig, "bun.lock"), "lock")
+	writeTestFile(t, filepath.Join(sourceConfig, "opencode.json"), `{"bad":true}`)
+	writeTestFile(t, filepath.Join(sourceConfig, "agents", "reviewer.md"), "bad agent")
+	writeTestFile(t, filepath.Join(sourceConfig, "tools", "submit_review.ts"), "bad tool")
+	writeTestFile(t, filepath.Join(sourceConfig, "sub-agents", "helper.md"), "bad sub-agent")
+	writeTestFile(t, filepath.Join(xdgCache, "opencode", "provider", "cache.txt"), "provider")
+	writeTestFile(t, filepath.Join(xdgCache, "opencode", "snapshot", "bad.txt"), "snapshot")
+	writeTestFile(t, filepath.Join(xdgCache, "opencode", "state", "bad.txt"), "state")
+	writeTestFile(t, filepath.Join(bunCache, "ai-sdk", "pkg.tgz"), "bun")
+
+	ws, err := newReviewer(Config{Model: "test/model"}, "Review code.")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer func() { _ = ws.Cleanup() }()
+
+	for path, want := range map[string]string{
+		filepath.Join(ws.Dir(), "opencode", "node_modules", "pkg", "index.js"):           "module",
+		filepath.Join(ws.Dir(), "opencode", "package.json"):                              `{"name":"opencode"}`,
+		filepath.Join(ws.Dir(), "opencode", "bun.lock"):                                  "lock",
+		filepath.Join(ws.Dir(), "cache", "opencode", "provider", "cache.txt"):            "provider",
+		filepath.Join(ws.Dir(), "cache", "bun", "install", "cache", "ai-sdk", "pkg.tgz"): "bun",
+	} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read seeded file %s: %v", path, err)
+		}
+		if string(data) != want {
+			t.Fatalf("%s = %q, want %q", path, string(data), want)
+		}
+	}
+
+	configData, err := os.ReadFile(filepath.Join(ws.Dir(), "opencode", "opencode.json"))
+	if err != nil {
+		t.Fatalf("read generated config: %v", err)
+	}
+	if strings.Contains(string(configData), `"bad"`) {
+		t.Fatal("source opencode.json should not overwrite generated config")
+	}
+
+	agentData, err := os.ReadFile(filepath.Join(ws.Dir(), "opencode", "agents", "reviewer.md"))
+	if err != nil {
+		t.Fatalf("read generated agent: %v", err)
+	}
+	if strings.Contains(string(agentData), "bad agent") {
+		t.Fatal("source agents should not overwrite generated agents")
+	}
+
+	toolData, err := os.ReadFile(filepath.Join(ws.Dir(), "opencode", "tools", "submit_review.ts"))
+	if err != nil {
+		t.Fatalf("read generated tool: %v", err)
+	}
+	if strings.Contains(string(toolData), "bad tool") {
+		t.Fatal("source tools should not overwrite generated tools")
+	}
+	if _, err := os.Stat(filepath.Join(ws.Dir(), "opencode", "sub-agents", "helper.md")); !os.IsNotExist(err) {
+		t.Fatal("source sub-agents should not be copied")
+	}
+	if _, err := os.Stat(filepath.Join(ws.Dir(), "cache", "opencode", "snapshot", "bad.txt")); !os.IsNotExist(err) {
+		t.Fatal("source snapshot cache should not be copied")
+	}
+	if _, err := os.Stat(filepath.Join(ws.Dir(), "cache", "opencode", "state", "bad.txt")); !os.IsNotExist(err) {
+		t.Fatal("source state cache should not be copied")
+	}
+}
+
+func TestNew_MissingSourceCachesAreIgnored(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	t.Setenv("BUN_INSTALL_CACHE_DIR", filepath.Join(home, ".bun", "install", "cache"))
+
+	ws, err := newReviewer(Config{Model: "test/model"}, "")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer func() { _ = ws.Cleanup() }()
+
+	if _, err := os.Stat(filepath.Join(ws.Dir(), "opencode", "opencode.json")); err != nil {
+		t.Fatalf("generated config should still exist: %v", err)
+	}
+}
+
+func writeTestFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write %s: %v", path, err)
 	}
 }
 

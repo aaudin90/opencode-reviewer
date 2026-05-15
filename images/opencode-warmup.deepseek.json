@@ -1,0 +1,54 @@
+{
+  "provider": {
+    "deepseek": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "DeepSeek",
+      "options": {
+        "baseURL": "https://api.deepseek.com",
+        "apiKey": "{env:DEEPSEEK_API_KEY}",
+        "headers": {
+          "Authorization": "Bearer {env:DEEPSEEK_API_KEY}",
+          "Plugin-Type": "opencode"
+        },
+        "includeUsage": true,
+        "name": "deepseek"
+      },
+      "models": {
+        "deepseek-v4-flash": {
+          "attachment": false,
+          "cost": {
+            "cache_read": 0.003,
+            "input": 0.14,
+            "output": 0.28
+          },
+          "family": "deepseek-flash",
+          "id": "deepseek-v4-flash",
+          "interleaved": {
+            "field": "reasoning_content"
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 384000
+          },
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "name": "deepseek-v4-flash",
+          "options": {
+            "reasoningEffort": "medium"
+          },
+          "reasoning": true,
+          "release_date": "2026-04-24",
+          "temperature": true,
+          "tool_call": true
+        }
+      }
+    }
+  },
+  "model": "deepseek/deepseek-v4-flash"
+}

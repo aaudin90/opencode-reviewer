@@ -102,6 +102,7 @@ Environment variables:
   OR_OPENCODE_PRINT_LOGS       Pass --print-logs to opencode serve (true/1)
   OR_OPENCODE_LOG_LEVEL        Pass --log-level to opencode serve (DEBUG, INFO, WARN, ERROR)
   OR_OPENCODE_LOG_DIR          OpenCode log directory (default: opencode-review-logs)
+  OR_OPENCODE_KEEP_XDG_DIRS    Keep temporary OpenCode XDG dirs after run for debugging (true/1)
   OR_PROVIDER_CONFIG_PATH      Deprecated: path to provider JSON file (ignored when config-dir is active)
   OR_PROVIDER_CONFIG           Deprecated: inline provider JSON config (ignored when config-dir is active)
   OR_AGENT_PROMPT_PATH         Deprecated: path to reviewer agent prompt file (ignored when config-dir is active)

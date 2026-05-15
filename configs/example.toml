@@ -22,6 +22,7 @@
 #   OR_OPENCODE_PRINT_LOGS       Pass --print-logs to opencode serve
 #   OR_OPENCODE_LOG_LEVEL        Pass --log-level to opencode serve (DEBUG, INFO, WARN, ERROR)
 #   OR_OPENCODE_LOG_DIR          OpenCode log directory
+#   OR_OPENCODE_KEEP_XDG_DIRS    Keep temporary OpenCode XDG dirs after run for debugging
 #   OR_PROVIDER_CONFIG_PATH      Deprecated fallback: path to provider JSON file
 #   OR_PROVIDER_CONFIG           Deprecated fallback: inline provider JSON config
 #   OR_AGENT_PROMPT_PATH         Deprecated fallback: path to reviewer agent prompt file

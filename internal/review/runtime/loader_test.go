@@ -129,6 +129,11 @@ func setupRepo(t *testing.T) (*git.Client, string) {
 
 func loadRuntime(t *testing.T, workDir string) *pipeline.RuntimeResources {
 	t.Helper()
+	cacheHome := t.TempDir()
+	t.Setenv("HOME", cacheHome)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(cacheHome, ".config"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(cacheHome, ".cache"))
+	t.Setenv("BUN_INSTALL_CACHE_DIR", filepath.Join(cacheHome, ".bun", "install", "cache"))
 
 	loader := New(Config{
 		AppConfig: &config.Config{

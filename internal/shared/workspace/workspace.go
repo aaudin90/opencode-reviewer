@@ -10,9 +10,13 @@ import (
 
 const (
 	defaultMaxSteps = 50
+	keepXDGDirsEnv  = "OR_OPENCODE_KEEP_XDG_DIRS"
 	opencodeSubdir  = "opencode"
 	agentsDir       = "opencode/agents"
 	toolsDir        = "opencode/tools"
+	xdgCacheSubdir  = "cache"
+	xdgDataSubdir   = "data"
+	xdgStateSubdir  = "state"
 )
 
 // Workspace manages a temporary directory used as XDG_CONFIG_HOME for opencode.
@@ -45,6 +49,7 @@ func newWorkspace(cfg Config, spec AgentSpec) (*Workspace, error) {
 		_ = os.RemoveAll(dir)
 		return nil, fmt.Errorf("create opencode dir: %w", err)
 	}
+	seedOpenCodeCaches(dir)
 
 	defaultAgent := ""
 	if spec.Prompt != "" {
@@ -119,12 +124,49 @@ func (w *Workspace) Dir() string {
 	return w.dir
 }
 
+// CacheDir returns the workspace cache directory path (for XDG_CACHE_HOME).
+func (w *Workspace) CacheDir() string {
+	if w == nil || w.dir == "" {
+		return ""
+	}
+	return filepath.Join(w.dir, xdgCacheSubdir)
+}
+
+// DataDir returns the workspace data directory path (for XDG_DATA_HOME).
+func (w *Workspace) DataDir() string {
+	if w == nil || w.dir == "" {
+		return ""
+	}
+	return filepath.Join(w.dir, xdgDataSubdir)
+}
+
+// StateDir returns the workspace state directory path (for XDG_STATE_HOME).
+func (w *Workspace) StateDir() string {
+	if w == nil || w.dir == "" {
+		return ""
+	}
+	return filepath.Join(w.dir, xdgStateSubdir)
+}
+
 // Cleanup removes the temporary workspace directory.
 func (w *Workspace) Cleanup() error {
 	if w == nil || w.dir == "" {
 		return nil
 	}
+	if keepXDGDirs() {
+		slog.Info("workspace cleanup skipped", "dir", w.dir, "env", keepXDGDirsEnv)
+		return nil
+	}
 	return os.RemoveAll(w.dir)
+}
+
+func keepXDGDirs() bool {
+	switch os.Getenv(keepXDGDirsEnv) {
+	case "true", "1":
+		return true
+	default:
+		return false
+	}
 }
 
 func buildOpenCodeConfig(cfg Config, defaultAgent string) ([]byte, error) {
