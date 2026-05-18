@@ -8,6 +8,25 @@ import (
 	"github.com/aaudin90/opencode-reviewer/internal/shared/models"
 )
 
+func TestParseFinal_EmptyFindings(t *testing.T) {
+	input := `{"summary":"No findings","verdict":"approve","findings":[]}`
+
+	result := ParseFinal(input)
+
+	if result.ParseErr != nil {
+		t.Fatalf("ParseErr = %v, want nil when findings are empty", result.ParseErr)
+	}
+	if result.Raw != "" {
+		t.Errorf("Raw = %q, want empty", result.Raw)
+	}
+	if result.Verdict != "approve" {
+		t.Errorf("Verdict = %q, want approve", result.Verdict)
+	}
+	if len(result.Findings) != 0 {
+		t.Errorf("len(Findings) = %d, want 0", len(result.Findings))
+	}
+}
+
 func TestParseFinalToolArgs_FindingsWrongType(t *testing.T) {
 	input := json.RawMessage(`{
 		"summary": "Code looks good overall",

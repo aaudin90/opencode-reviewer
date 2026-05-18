@@ -30,7 +30,7 @@ func ParseFinal(raw string) *models.FinalReview {
 
 	var args submitFinalReviewArgs
 	if err := json.Unmarshal([]byte(cleaned), &args); err == nil {
-		if args.Verdict != "" && len(args.Findings) > 0 {
+		if args.Verdict != "" && args.Findings != nil {
 			result := &models.FinalReview{
 				Summary:  args.Summary,
 				Verdict:  args.Verdict,

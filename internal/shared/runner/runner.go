@@ -209,17 +209,22 @@ func schemaRetryPromptFor(toolName string, validationErr error, schemaHint strin
 
 func retryPromptFor(toolName string) string {
 	return fmt.Sprintf(
-		"You did not call the `%s` tool. "+
-			"You MUST call it now with all your findings. Do not output text — use the tool.",
-		toolName,
+		"STOP. Your previous response is invalid because you did not call the real `%s` tool.\n\n"+
+			"Your only valid next action is to call the actual `%s` tool now with the complete result.\n"+
+			"Do not answer with text. Do not answer with JSON. Do not use Markdown. Do not explain. "+
+			"Do not say the tool was called. Do not simulate a tool call in prose or code.\n\n"+
+			"If there are no findings or this review is out of scope, still call `%s` with an empty findings array. "+
+			"The review cannot continue until the real tool call is emitted.",
+		toolName, toolName, toolName,
 	)
 }
 
 func jsonFallbackPromptFor(toolName string) string {
 	return fmt.Sprintf(
 		"You failed to call the `%s` tool. "+
-			"Respond with ONLY a valid JSON object using the exact same schema as the `%s` tool arguments. "+
-			"No prose, no markdown fences — just the raw JSON object.",
+			"Respond with ONLY one valid raw JSON object using the exact same schema as the `%s` tool arguments. "+
+			"Do not wrap it in markdown fences. Do not add prose before or after it. "+
+			"Do not say the tool was called. Empty findings must be represented as an empty array: \"findings\": [].",
 		toolName, toolName,
 	)
 }

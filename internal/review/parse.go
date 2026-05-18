@@ -60,7 +60,7 @@ func Parse(raw string) *models.ReviewResult {
 
 	var args submitReviewArgs
 	if err := json.Unmarshal([]byte(cleaned), &args); err == nil {
-		if args.Verdict != "" && len(args.Findings) > 0 {
+		if args.Verdict != "" && args.Findings != nil {
 			result := &models.ReviewResult{
 				ReviewerName: args.ReviewerName,
 				Summary:      args.Summary,
