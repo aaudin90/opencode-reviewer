@@ -101,10 +101,11 @@ func ensureToolRestrictions(content string) string {
 	closeIdx := strings.Index(afterOpen, "\n---")
 	frontmatter := afterOpen[:closeIdx]
 
-	hasSubmitReview := strings.Contains(frontmatter, "submit_review: false")
-	hasSubmitFinal := strings.Contains(frontmatter, "submit_final_review: false")
+	hasListTools := strings.Contains(frontmatter, "\n  - type:")
+	hasSubmitReview := hasDisabledTool(frontmatter, "submit_review")
+	hasSubmitFinal := hasDisabledTool(frontmatter, "submit_final_review")
 
-	if hasSubmitReview && hasSubmitFinal {
+	if hasSubmitReview && hasSubmitFinal && !hasListTools {
 		return content
 	}
 
@@ -121,6 +122,18 @@ func ensureToolRestrictions(content string) string {
 		toolsRelIdx := strings.Index(frontmatter, "tools:")
 		toolsAbsIdx := fmStart + toolsRelIdx
 		lineEndRel := strings.Index(content[toolsAbsIdx:], "\n")
+		if hasListTools {
+			blockEnd := findToolsBlockEnd(content, toolsAbsIdx+lineEndRel+1, fmStart+closeIdx)
+			toolsBlock := content[toolsAbsIdx:blockEnd]
+			normalized := normalizeListToolsBlock(toolsBlock)
+			for _, line := range missing {
+				toolName := strings.TrimSuffix(strings.TrimSpace(line), ": false")
+				if !strings.Contains(normalized, "\n  "+toolName+": ") {
+					normalized += "\n  " + toolName + ": false"
+				}
+			}
+			return content[:toolsAbsIdx] + normalized + content[blockEnd:]
+		}
 		insertAt := toolsAbsIdx + lineEndRel
 		return content[:insertAt] + "\n" + strings.Join(missing, "\n") + content[insertAt:]
 	}
@@ -128,6 +141,88 @@ func ensureToolRestrictions(content string) string {
 	insertAt := openIdx + 3 + closeIdx
 	block := "tools:\n" + strings.Join(missing, "\n")
 	return content[:insertAt] + "\n" + block + content[insertAt:]
+}
+
+func normalizeListToolsBlock(block string) string {
+	type toolPermission struct {
+		name    string
+		allowed string
+	}
+
+	var result []toolPermission
+	lines := strings.Split(block, "\n")
+	for i := 0; i < len(lines); i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if !strings.HasPrefix(trimmed, "- type: ") {
+			continue
+		}
+		name := strings.TrimSpace(strings.TrimPrefix(trimmed, "- type: "))
+		allowed := "true"
+		for _, next := range lines[i+1:] {
+			nextTrimmed := strings.TrimSpace(next)
+			if strings.HasPrefix(nextTrimmed, "- type: ") {
+				break
+			}
+			if strings.HasPrefix(nextTrimmed, "allowed: ") {
+				allowed = strings.TrimSpace(strings.TrimPrefix(nextTrimmed, "allowed: "))
+				break
+			}
+		}
+		result = append(result, toolPermission{name: name, allowed: allowed})
+	}
+
+	var b strings.Builder
+	b.WriteString("tools:")
+	for _, item := range result {
+		b.WriteString("\n  ")
+		b.WriteString(item.name)
+		b.WriteString(": ")
+		b.WriteString(item.allowed)
+	}
+	return b.String()
+}
+
+func hasDisabledTool(frontmatter, toolName string) bool {
+	if strings.Contains(frontmatter, toolName+": false") {
+		return true
+	}
+
+	lines := strings.Split(frontmatter, "\n")
+	for i, line := range lines {
+		if strings.TrimSpace(line) != "- type: "+toolName {
+			continue
+		}
+		for _, next := range lines[i+1:] {
+			trimmed := strings.TrimSpace(next)
+			if strings.HasPrefix(trimmed, "- type: ") {
+				return false
+			}
+			if trimmed == "allowed: false" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func findToolsBlockEnd(content string, start, frontmatterEnd int) int {
+	pos := start
+	for pos < frontmatterEnd {
+		next := strings.IndexByte(content[pos:frontmatterEnd], '\n')
+		lineEnd := frontmatterEnd
+		if next >= 0 {
+			lineEnd = pos + next
+		}
+		line := content[pos:lineEnd]
+		if strings.TrimSpace(line) != "" && !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
+			return pos
+		}
+		if next < 0 {
+			break
+		}
+		pos = lineEnd + 1
+	}
+	return frontmatterEnd
 }
 
 func readAll(paths []string, baseDir string) ([]SubAgent, error) {

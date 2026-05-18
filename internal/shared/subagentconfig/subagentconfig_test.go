@@ -253,6 +253,48 @@ func TestLoad_EnsureToolRestrictions_NoopWhenPresent(t *testing.T) {
 	}
 }
 
+func TestLoad_EnsureToolRestrictions_NormalizesListToolsWhenPresent(t *testing.T) {
+	t.Setenv("TEST_SUB_AGENT_PATHS", "")
+
+	prompt := "---\ndescription: \"test\"\nmode: subagent\ntools:\n  - type: read\n    allowed: true\n  - type: submit_review\n    allowed: false\n  - type: submit_final_review\n    allowed: false\n---\n\nPrompt"
+	inline := []string{prompt}
+	result, err := Load("TEST_SUB_AGENT_PATHS", "reviewer", ".", nil, inline)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if strings.Contains(result[0].Prompt, "- type:") {
+		t.Errorf("expected list tools to be normalized, got:\n%s", result[0].Prompt)
+	}
+	for _, want := range []string{"read: true", "submit_review: false", "submit_final_review: false"} {
+		if !strings.Contains(result[0].Prompt, want) {
+			t.Errorf("expected normalized prompt to contain %q, got:\n%s", want, result[0].Prompt)
+		}
+	}
+}
+
+func TestLoad_EnsureToolRestrictions_NormalizesAndExtendsListTools(t *testing.T) {
+	t.Setenv("TEST_SUB_AGENT_PATHS", "")
+
+	prompt := "---\ndescription: \"test\"\nmode: subagent\ntools:\n  - type: read\n    allowed: true\n---\n\nPrompt"
+	inline := []string{prompt}
+	result, err := Load("TEST_SUB_AGENT_PATHS", "reviewer", ".", nil, inline)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if strings.Contains(result[0].Prompt, "- type:") {
+		t.Errorf("expected list tools to be normalized, got:\n%s", result[0].Prompt)
+	}
+	if !strings.Contains(result[0].Prompt, "read: true") {
+		t.Error("expected read permission to be preserved")
+	}
+	if !strings.Contains(result[0].Prompt, "submit_review: false") {
+		t.Error("expected submit_review restriction")
+	}
+	if !strings.Contains(result[0].Prompt, "submit_final_review: false") {
+		t.Error("expected submit_final_review restriction")
+	}
+}
+
 func TestLoadWithOptions_DisablesLegacyEnv(t *testing.T) {
 	dir := t.TempDir()
 	envPath := filepath.Join(dir, "env.md")
