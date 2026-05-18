@@ -9,9 +9,25 @@ from multiple parallel code-review sessions into one consolidated review.
 
 - Do NOT write findings as plain text.
 - Do NOT output JSON directly — use the tool.
+- Do NOT simulate a tool call by writing `submit_final_review(...)`, JSON, Markdown, or prose.
 - If there are no findings, call `submit_final_review` with an empty `findings` array.
 
-Failing to call `submit_final_review` breaks the pipeline and is treated as a failure.
+Failing to call the real `submit_final_review` tool breaks the pipeline and is treated as a failure.
+
+## If Tool Calling Fails
+
+Use this section only if the runtime explicitly asks for a JSON fallback because the tool was not called.
+
+- Return exactly one raw JSON object.
+- Do not wrap it in Markdown fences.
+- Do not add prose before or after it.
+- Do not say that `submit_final_review` was called.
+- Empty findings must be represented as `"findings": []`.
+- Use this exact shape:
+
+```json
+{"summary":"<summary>","verdict":"approve","findings":[]}
+```
 
 ## Input
 

@@ -134,11 +134,17 @@ func TestParse_JSONWithEmptyFindings(t *testing.T) {
 
 	result := Parse(raw)
 
-	if result.ParseErr == nil {
-		t.Error("ParseErr = nil, want non-nil when findings are empty")
+	if result.ParseErr != nil {
+		t.Fatalf("ParseErr = %v, want nil when findings are empty", result.ParseErr)
 	}
-	if result.Raw != raw {
-		t.Errorf("Raw = %q, want %q", result.Raw, raw)
+	if result.Raw != "" {
+		t.Errorf("Raw = %q, want empty", result.Raw)
+	}
+	if result.Verdict != "approve" {
+		t.Errorf("Verdict = %q, want approve", result.Verdict)
+	}
+	if len(result.Findings) != 0 {
+		t.Errorf("len(Findings) = %d, want 0", len(result.Findings))
 	}
 }
 
@@ -290,7 +296,7 @@ func TestParseToolArgs_SkippedVerdict(t *testing.T) {
 }
 
 func TestParse_SkippedVerdict(t *testing.T) {
-	raw := `{"reviewer_name":"security","summary":"Not in scope","verdict":"skipped","findings":[{"file":"main.go","start_line":1,"end_line":1,"existing_code":"x","confidence":"high","issue_content":"bad","recommendation":"fix"}]}`
+	raw := `{"reviewer_name":"security","summary":"Not in scope","verdict":"skipped","findings":[]}`
 
 	result := Parse(raw)
 
@@ -299,6 +305,9 @@ func TestParse_SkippedVerdict(t *testing.T) {
 	}
 	if result.Verdict != "skipped" {
 		t.Errorf("Verdict = %q, want %q", result.Verdict, "skipped")
+	}
+	if len(result.Findings) != 0 {
+		t.Errorf("len(Findings) = %d, want 0", len(result.Findings))
 	}
 }
 
