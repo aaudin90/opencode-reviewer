@@ -209,11 +209,13 @@ func schemaRetryPromptFor(toolName string, validationErr error, schemaHint strin
 
 func retryPromptFor(toolName string) string {
 	return fmt.Sprintf(
-		"You did not call the real `%s` tool. "+
-			"You MUST call the actual tool now with the complete result. "+
-			"Do not write JSON, Markdown, prose, or text that says the tool was called. "+
-			"Use only the tool call UI/API.",
-		toolName,
+		"STOP. Your previous response is invalid because you did not call the real `%s` tool.\n\n"+
+			"Your only valid next action is to call the actual `%s` tool now with the complete result.\n"+
+			"Do not answer with text. Do not answer with JSON. Do not use Markdown. Do not explain. "+
+			"Do not say the tool was called. Do not simulate a tool call in prose or code.\n\n"+
+			"If there are no findings or this review is out of scope, still call `%s` with an empty findings array. "+
+			"The review cannot continue until the real tool call is emitted.",
+		toolName, toolName, toolName,
 	)
 }
 
