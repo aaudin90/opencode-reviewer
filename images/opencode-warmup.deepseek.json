@@ -40,7 +40,7 @@
           },
           "name": "deepseek-v4-flash",
           "options": {
-            "reasoningEffort": "medium"
+            "reasoningEffort": "max"
           },
           "reasoning": true,
           "release_date": "2026-04-24",
