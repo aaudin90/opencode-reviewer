@@ -3,6 +3,7 @@ package sse
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -75,6 +76,67 @@ func TestParseStream_StatusNotCompleted(t *testing.T) {
 	_, err := parseStream(strings.NewReader(stream), "sess-1", "submit_review", nil, nil)
 	if err == nil {
 		t.Fatal("expected error for non-completed status, got nil")
+	}
+}
+
+func TestParseStream_StatusErrorIsRetryable(t *testing.T) {
+	stream := makeToolCallEvent("sess-1", "submit_review", "error", map[string]any{"verdict": "approve"})
+	_, err := parseStream(strings.NewReader(stream), "sess-1", "submit_review", nil, nil)
+	if err == nil {
+		t.Fatal("expected error for error status, got nil")
+	}
+	if !IsRetryable(err) {
+		t.Fatalf("expected retryable error, got %v", err)
+	}
+}
+
+func TestWaitForToolResult_Non200CodeError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "rate limited", http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	client := New(srv.Client(), srv.URL)
+	_, err := client.WaitForToolResult(context.Background(), "sess-1", "submit_review", nil, nil)
+	if err == nil {
+		t.Fatal("expected code error, got nil")
+	}
+	if !IsCodeError(err) {
+		t.Fatalf("IsCodeError = false for %v", err)
+	}
+	var codeErr *CodeError
+	if !errors.As(err, &codeErr) {
+		t.Fatalf("error type = %T, want *CodeError", err)
+	}
+	if codeErr.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want %d", codeErr.StatusCode, http.StatusTooManyRequests)
+	}
+	if codeErr.Source != "GET /event" || !strings.Contains(codeErr.Snippet, "rate limited") {
+		t.Fatalf("code error = %+v, want source and body snippet", codeErr)
+	}
+}
+
+func TestParseStream_SessionErrorCodeError(t *testing.T) {
+	stream := `event: session.error
+data: {"type":"session.error","properties":{"error":{"statusCode":500,"message":"provider exploded"}}}
+
+`
+	_, err := parseStream(strings.NewReader(stream), "sess-1", "submit_review", nil, nil)
+	if err == nil {
+		t.Fatal("expected code error, got nil")
+	}
+	if !IsCodeError(err) {
+		t.Fatalf("IsCodeError = false for %v", err)
+	}
+	var codeErr *CodeError
+	if !errors.As(err, &codeErr) {
+		t.Fatalf("error type = %T, want *CodeError", err)
+	}
+	if codeErr.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", codeErr.StatusCode, http.StatusInternalServerError)
+	}
+	if codeErr.Source != "session.error" || codeErr.Snippet != "provider exploded" {
+		t.Fatalf("code error = %+v, want session.error message", codeErr)
 	}
 }
 

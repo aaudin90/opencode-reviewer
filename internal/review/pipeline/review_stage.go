@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -15,6 +16,7 @@ import (
 type ReviewStage struct {
 	runner   *runner.Runner
 	messages []models.ReviewMessage
+	models   []string
 }
 
 // NewReviewStage creates a ReviewStage from the given config.
@@ -32,6 +34,7 @@ func NewReviewStage(cfg ReviewStageConfig) *ReviewStage {
 	return &ReviewStage{
 		runner:   cfg.Runner,
 		messages: messages,
+		models:   normalizeModelChain(cfg.ModelChain),
 	}
 }
 
@@ -44,12 +47,13 @@ func (s *ReviewStage) Run(ctx context.Context) ([]*models.ReviewResult, []runner
 		return nil, nil, fmt.Errorf("start reviewer serve: %w", err)
 	}
 	defer s.runner.StopServe()
-	if err := s.runner.Precheck(ctx, "reviewer"); err != nil {
-		return nil, nil, fmt.Errorf("reviewer precheck: %w", err)
+	models, err := s.precheckModels(ctx)
+	if err != nil {
+		return nil, nil, err
 	}
-	results, stats := s.runAllReviews(ctx)
+	results, stats := s.runAllReviews(ctx, models)
 	if failed := len(s.messages) - len(results); failed > 0 {
-		return nil, nil, fmt.Errorf("%d of %d review sessions failed", failed, len(s.messages))
+		return nil, nil, fmt.Errorf("%d of %d review sessions failed; models exhausted: %v", failed, len(s.messages), models)
 	}
 	return results, stats, nil
 }
@@ -58,18 +62,35 @@ func (s *ReviewStage) Run(ctx context.Context) ([]*models.ReviewResult, []runner
 func (s *ReviewStage) MessageCount() int { return len(s.messages) }
 
 // runAllReviews runs all reviewer sessions in parallel.
-func (s *ReviewStage) runAllReviews(ctx context.Context) ([]*models.ReviewResult, []runner.SessionStats) {
+func (s *ReviewStage) precheckModels(ctx context.Context) ([]string, error) {
+	var errs []error
+	for idx, model := range s.models {
+		if err := s.runner.Precheck(ctx, "reviewer", model); err != nil {
+			if isContextErr(err) {
+				return nil, fmt.Errorf("reviewer precheck model %q: %w", model, err)
+			}
+			slog.Warn("reviewer precheck failed", "model", model, "error", err)
+			errs = append(errs, fmt.Errorf("%s: %w", modelLabel(model), err))
+			continue
+		}
+		return s.models[idx:], nil
+	}
+	return nil, fmt.Errorf("reviewer precheck failed for all models %v: %w", s.models, errors.Join(errs...))
+}
+
+// runAllReviews runs all reviewer sessions in parallel.
+func (s *ReviewStage) runAllReviews(ctx context.Context, modelChain []string) ([]*models.ReviewResult, []runner.SessionStats) {
 	resultsCh := make(chan promptRunResult, len(s.messages))
 
 	for idx, msg := range s.messages {
 		go func(message models.ReviewMessage, i int) {
-			result, stats, runErr := s.runSingleReview(ctx, message, i)
+			result, stats, runErr := s.runSingleReview(ctx, message, i, modelChain)
 			resultsCh <- promptRunResult{index: i, result: result, stats: stats, err: runErr}
 		}(msg, idx)
 	}
 
-	results := make([]*models.ReviewResult, 0, len(s.messages))
-	var allStats []runner.SessionStats
+	resultsByIndex := make([]*models.ReviewResult, len(s.messages))
+	statsByIndex := make([]runner.SessionStats, len(s.messages))
 	for range s.messages {
 		r := <-resultsCh
 		if r.err != nil {
@@ -82,20 +103,31 @@ func (s *ReviewStage) runAllReviews(ctx context.Context) ([]*models.ReviewResult
 			"verdict", r.result.Verdict,
 			"findings", len(r.result.Findings),
 		)
-		results = append(results, r.result)
-		allStats = append(allStats, r.stats)
+		resultsByIndex[r.index] = r.result
+		statsByIndex[r.index] = r.stats
+	}
+
+	results := make([]*models.ReviewResult, 0, len(s.messages))
+	allStats := make([]runner.SessionStats, 0, len(s.messages))
+	for idx := range s.messages {
+		if resultsByIndex[idx] == nil {
+			continue
+		}
+		results = append(results, resultsByIndex[idx])
+		allStats = append(allStats, statsByIndex[idx])
 	}
 
 	return results, allStats
 }
 
-func (s *ReviewStage) runSingleReview(ctx context.Context, message models.ReviewMessage, idx int) (*models.ReviewResult, runner.SessionStats, error) {
-	slog.Info("starting review session", "prompt_index", idx)
+func (s *ReviewStage) runSingleReview(ctx context.Context, message models.ReviewMessage, idx int, modelChain []string) (*models.ReviewResult, runner.SessionStats, error) {
+	slog.Info("starting review session", "prompt_index", idx, "model_chain", modelChain)
 	runResult, err := collectRunResult(ctx, s.runner, runner.RunRequest{
 		Prompt:     message.Content,
 		ToolName:   "submit_review",
 		PromptPath: fmt.Sprintf("message-%d", idx),
 		AgentName:  "reviewer",
+		ModelChain: modelChain,
 		ValidateFunc: func(data json.RawMessage) error {
 			return review.ParseToolArgs(data).ParseErr
 		},

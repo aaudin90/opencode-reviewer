@@ -61,51 +61,104 @@ func (s *runSession) execute(ctx context.Context) {
 	}()
 
 	var lastInvalidData json.RawMessage
-	var lastSchemaErr error
 
-	for attempt := range maxRetries {
-		var prompt string
-		switch {
-		case attempt == 0:
-			prompt = s.req.Prompt
-		case lastSchemaErr != nil:
-			prompt = schemaRetryPromptFor(s.req.ToolName, lastSchemaErr, s.req.SchemaHint)
-			slog.Warn("retrying: schema validation failed", "tool", s.req.ToolName, "attempt", attempt)
-		default:
-			prompt = retryPromptFor(s.req.ToolName)
-			slog.Warn("retrying: tool not called", "tool", s.req.ToolName, "attempt", attempt)
-		}
+	modelChain := s.modelChain()
+	modelIndex := 0
+	currentModel := modelChain[modelIndex]
+	prompt := s.req.Prompt
+	attempt := 0
+	toolMissCount := 0
+	schemaRetryCount := 0
+	codeErrorCount := 0
+	retryableErrCount := 0
 
-		slog.Info("sending message to session", "session", s.sessionID, "attempt", attempt)
-		data, err := s.sendAndAwaitTool(prompt)
+	for {
+		slog.Info("sending message to session", "session", s.sessionID, "attempt", attempt, "model", currentModel)
+		data, err := s.sendAndAwaitTool(prompt, currentModel)
 		if err != nil {
+			attempt++
+			if isCodeError(err) {
+				codeErrorCount++
+				if codeErrorCount >= maxRetries {
+					if modelIndex+1 >= len(modelChain) {
+						s.emitErr(fmt.Errorf("code errors exhausted for model chain %v; last model %s: %w", modelChain, runModelLabel(currentModel), err))
+						return
+					}
+					modelIndex++
+					currentModel = modelChain[modelIndex]
+					codeErrorCount = 0
+					prompt = continuationPromptFor()
+					slog.Warn("switching model after code errors",
+						"tool", s.req.ToolName,
+						"session", s.sessionID,
+						"next_model", currentModel,
+						"error", err,
+					)
+					continue
+				}
+				prompt = continuationPromptFor()
+				slog.Warn("retrying: code error", "tool", s.req.ToolName, "attempt", attempt, "model", currentModel, "error", err)
+				continue
+			}
+			if isRetryableError(err) {
+				retryableErrCount++
+				if retryableErrCount >= maxRetries {
+					s.emitErr(err)
+					return
+				}
+				prompt = continuationPromptFor()
+				slog.Warn("retrying: transient terminal error", "tool", s.req.ToolName, "attempt", attempt, "error", err)
+				continue
+			}
 			if errors.Is(err, errToolNotCalled) {
-				lastInvalidData = nil
-				lastSchemaErr = nil
+				toolMissCount++
+				if toolMissCount >= maxRetries {
+					s.jsonFallback(nil, currentModel)
+					return
+				}
+				prompt = retryPromptFor(s.req.ToolName)
+				slog.Warn("retrying: tool not called", "tool", s.req.ToolName, "attempt", attempt)
 				continue
 			}
 			s.emitErr(err)
 			return
 		}
-
+		attempt++
 		if s.req.ValidateFunc != nil {
 			if vErr := s.req.ValidateFunc(data); vErr != nil {
 				slog.Warn("schema validation failed",
 					"tool", s.req.ToolName, "attempt", attempt, "error", vErr)
 				lastInvalidData = data
-				lastSchemaErr = vErr
+				schemaRetryCount++
+				if schemaRetryCount >= maxRetries {
+					s.jsonFallback(lastInvalidData, currentModel)
+					return
+				}
+				prompt = schemaRetryPromptFor(s.req.ToolName, vErr, s.req.SchemaHint)
 				continue
 			}
 		}
 
-		s.emitToolResult(data, attempt)
+		s.emitToolResult(data, attempt-1)
 		return
 	}
-
-	s.jsonFallback(lastInvalidData)
 }
 
-func (s *runSession) sendAndAwaitTool(prompt string) (json.RawMessage, error) {
+func (s *runSession) modelChain() []string {
+	if len(s.req.ModelChain) > 0 {
+		return s.req.ModelChain
+	}
+	return []string{s.req.Model}
+}
+
+func runModelLabel(model string) string {
+	if model == "" {
+		return "<default>"
+	}
+	return model
+}
+
+func (s *runSession) sendAndAwaitTool(prompt, model string) (json.RawMessage, error) {
 	attemptCtx, attemptCancel := context.WithCancel(s.ctx)
 
 	events := make(chan sse.ToolCall, 256)
@@ -125,7 +178,7 @@ func (s *runSession) sendAndAwaitTool(prompt string) (json.RawMessage, error) {
 	}()
 
 	msgStart := time.Now()
-	resp, err := s.r.sendMessage(s.ctx, s.sessionID, RunRequest{Prompt: prompt, AgentName: s.req.AgentName})
+	resp, err := s.r.sendMessage(s.ctx, s.sessionID, RunRequest{Prompt: prompt, AgentName: s.req.AgentName, Model: model})
 	if err != nil {
 		attemptCancel()
 		<-tcDone
@@ -145,6 +198,9 @@ func (s *runSession) sendAndAwaitTool(prompt string) (json.RawMessage, error) {
 		<-tcDone
 		if res.err == nil {
 			return res.data, nil
+		}
+		if isCodeError(res.err) || isRetryableError(res.err) {
+			return nil, res.err
 		}
 		return nil, errToolNotCalled
 	case <-time.After(toolCallWaitTimeout):
@@ -181,7 +237,7 @@ func (s *runSession) emitErr(err error) {
 	s.out <- RunEvent{Err: err}
 }
 
-func (s *runSession) jsonFallback(lastToolData json.RawMessage) {
+func (s *runSession) jsonFallback(lastToolData json.RawMessage, model string) {
 	slog.Warn("all retries exhausted, requesting JSON fallback",
 		"tool", s.req.ToolName, "session", s.sessionID)
 
@@ -189,6 +245,7 @@ func (s *runSession) jsonFallback(lastToolData json.RawMessage) {
 	resp, err := s.r.sendMessage(s.ctx, s.sessionID, RunRequest{
 		Prompt:    jsonFallbackPromptFor(s.req.ToolName),
 		AgentName: s.req.AgentName,
+		Model:     model,
 	})
 	if err != nil {
 		s.pollCancel()

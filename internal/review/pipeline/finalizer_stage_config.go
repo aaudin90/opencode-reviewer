@@ -6,4 +6,5 @@ import "github.com/aaudin90/opencode-reviewer/internal/shared/runner"
 type FinalizerStageConfig struct {
 	Runner           *runner.Runner
 	FinalizerMessage string
+	ModelChain       []string
 }

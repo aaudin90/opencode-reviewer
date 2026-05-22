@@ -251,9 +251,29 @@ func helperOpenCodeServe() {
 	}
 }
 
+func testModelString(model *messageModel) string {
+	if model == nil {
+		return ""
+	}
+	return model.ProviderID + "/" + model.ModelID
+}
+
+func assertStrings(t *testing.T, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("len = %d, want %d; got %v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("[%d] = %q, want %q; got %v", i, got[i], want[i], got)
+		}
+	}
+}
+
 func TestPrecheckSendsDeterministicPrompt(t *testing.T) {
 	var gotPrompt string
 	var gotAgent string
+	var gotModel *messageModel
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /session", func(w http.ResponseWriter, _ *http.Request) {
@@ -270,6 +290,7 @@ func TestPrecheckSendsDeterministicPrompt(t *testing.T) {
 			gotPrompt = mr.Parts[0].Text
 		}
 		gotAgent = mr.Agent
+		gotModel = mr.Model
 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(messageResponse{
@@ -287,7 +308,7 @@ func TestPrecheckSendsDeterministicPrompt(t *testing.T) {
 	defer srv.Close()
 
 	r := newTestRunner(config.OpenCodeConfig{Endpoint: srv.URL, Model: "test/model"})
-	if err := r.Precheck(context.Background(), "reviewer"); err != nil {
+	if err := r.Precheck(context.Background(), "reviewer", "override/model"); err != nil {
 		t.Fatalf("Precheck: %v", err)
 	}
 	if gotPrompt != precheckPrompt {
@@ -295,6 +316,12 @@ func TestPrecheckSendsDeterministicPrompt(t *testing.T) {
 	}
 	if gotAgent != "reviewer" {
 		t.Errorf("agent = %q, want reviewer", gotAgent)
+	}
+	if gotModel == nil {
+		t.Fatal("model is nil")
+	}
+	if gotModel.ProviderID != "override" || gotModel.ModelID != "model" {
+		t.Errorf("model = %+v, want override/model", gotModel)
 	}
 }
 
@@ -423,6 +450,85 @@ func TestRun(t *testing.T) {
 	}
 }
 
+func TestRunRequestModelOverride(t *testing.T) {
+	toolArgs := map[string]any{
+		"summary":  "Looks good",
+		"verdict":  "approve",
+		"findings": []any{},
+	}
+	ssePayload := makeToolCallSSE("sess-override", toolArgs)
+
+	var gotModel *messageModel
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /event", func(w http.ResponseWriter, req *http.Request) {
+		flusher := w.(http.Flusher)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, ssePayload)
+		flusher.Flush()
+	})
+	mux.HandleFunc("POST /session", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(sessionResponse{ID: "sess-override"})
+	})
+	mux.HandleFunc("POST /session/{id}/message", func(w http.ResponseWriter, req *http.Request) {
+		var mr messageRequest
+		if err := json.NewDecoder(req.Body).Decode(&mr); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		gotModel = mr.Model
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(messageResponse{
+			Info:  messageInfo{ID: "msg-override"},
+			Parts: []messagePart{{Type: "text", Text: "ok"}},
+		})
+	})
+	mux.HandleFunc("DELETE /session/{id}", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("GET /session/{id}/children", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]sessionResponse{})
+	})
+	mux.HandleFunc("GET /session/{id}/message", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]sessionMessage{})
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	r := newTestRunner(config.OpenCodeConfig{
+		Endpoint:     srv.URL,
+		Model:        "default/model",
+		StageTimeout: 10,
+	})
+
+	result, err := collectRunResult(t, r.Run(context.Background(), RunRequest{
+		Prompt:    "review this",
+		ToolName:  "submit_review",
+		AgentName: "reviewer",
+		Model:     "override/model",
+	}))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if result == nil || result.ToolArgs == nil {
+		t.Fatal("expected tool args")
+	}
+	if gotModel == nil {
+		t.Fatal("model is nil")
+	}
+	if gotModel.ProviderID != "override" || gotModel.ModelID != "model" {
+		t.Errorf("model = %+v, want override/model", gotModel)
+	}
+	if r.cfg.Model != "default/model" {
+		t.Errorf("runner cfg model mutated to %q", r.cfg.Model)
+	}
+}
+
 func TestRunRetry(t *testing.T) {
 	toolArgs := map[string]any{
 		"summary":  "Issues found",
@@ -528,6 +634,369 @@ func TestRunRetry(t *testing.T) {
 		if p != wantRetry {
 			t.Errorf("msgPrompts[%d] = %q, want retryPromptFor(%q)", i+1, p, testTool)
 		}
+	}
+}
+
+func TestRunRetriesRetryableSendMessageErrorWithContinuationPrompt(t *testing.T) {
+	toolArgs := map[string]any{
+		"summary":  "Recovered",
+		"verdict":  "approve",
+		"findings": []any{},
+	}
+	ssePayload := makeToolCallSSE("sess-send-retry", toolArgs)
+
+	var messageCalls atomic.Int32
+	var prompts []string
+	var mu sync.Mutex
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /event", func(w http.ResponseWriter, req *http.Request) {
+		flusher := w.(http.Flusher)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		deadline := time.NewTimer(100 * time.Millisecond)
+		defer deadline.Stop()
+		ticker := time.NewTicker(time.Millisecond)
+		defer ticker.Stop()
+		for messageCalls.Load() < 3 {
+			select {
+			case <-req.Context().Done():
+				return
+			case <-deadline.C:
+				flusher.Flush()
+				return
+			case <-ticker.C:
+			}
+		}
+		fmt.Fprint(w, ssePayload)
+		flusher.Flush()
+	})
+	mux.HandleFunc("POST /session", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(sessionResponse{ID: "sess-send-retry"})
+	})
+	mux.HandleFunc("POST /session/{id}/message", func(w http.ResponseWriter, req *http.Request) {
+		var mr messageRequest
+		if err := json.NewDecoder(req.Body).Decode(&mr); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if len(mr.Parts) > 0 {
+			mu.Lock()
+			prompts = append(prompts, mr.Parts[0].Text)
+			mu.Unlock()
+		}
+		call := messageCalls.Add(1)
+		if call < 3 {
+			http.Error(w, "retry later", http.StatusTooManyRequests)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(messageResponse{
+			Info:  messageInfo{ID: "msg-send-retry"},
+			Parts: []messagePart{{Type: "text", Text: "ok"}},
+		})
+	})
+	mux.HandleFunc("DELETE /session/{id}", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("GET /session/{id}/children", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]sessionResponse{})
+	})
+	mux.HandleFunc("GET /session/{id}/message", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]sessionMessage{})
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	r := newTestRunner(config.OpenCodeConfig{
+		Endpoint:     srv.URL,
+		Model:        "test/model",
+		StageTimeout: 30,
+	})
+
+	result, err := collectRunResult(t, r.Run(context.Background(), RunRequest{
+		Prompt:    "review this",
+		ToolName:  "submit_review",
+		AgentName: "reviewer",
+	}))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if result == nil || result.ToolArgs == nil {
+		t.Fatal("expected tool result after retry")
+	}
+
+	mu.Lock()
+	gotPrompts := append([]string(nil), prompts...)
+	mu.Unlock()
+	if len(gotPrompts) != 3 {
+		t.Fatalf("prompts = %d, want 3", len(gotPrompts))
+	}
+	for i, prompt := range gotPrompts[1:] {
+		if prompt != continuationPromptFor() {
+			t.Errorf("prompt[%d] = %q, want continuation prompt", i+1, prompt)
+		}
+	}
+}
+
+func TestRunCodeErrorSwitchesModelInSameSession(t *testing.T) {
+	toolArgs := map[string]any{
+		"summary":  "Recovered",
+		"verdict":  "approve",
+		"findings": []any{},
+	}
+	ssePayload := makeToolCallSSE("sess-code-switch", toolArgs)
+
+	var mu sync.Mutex
+	var models []string
+	var sessionIDs []string
+	successReady := make(chan struct{})
+	var successOnce sync.Once
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /event", func(w http.ResponseWriter, req *http.Request) {
+		flusher := w.(http.Flusher)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		select {
+		case <-successReady:
+			fmt.Fprint(w, ssePayload)
+		case <-req.Context().Done():
+			return
+		case <-time.After(200 * time.Millisecond):
+		}
+		flusher.Flush()
+	})
+	mux.HandleFunc("POST /session", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(sessionResponse{ID: "sess-code-switch"})
+	})
+	mux.HandleFunc("POST /session/{id}/message", func(w http.ResponseWriter, req *http.Request) {
+		var mr messageRequest
+		if err := json.NewDecoder(req.Body).Decode(&mr); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		model := testModelString(mr.Model)
+		mu.Lock()
+		models = append(models, model)
+		sessionIDs = append(sessionIDs, req.PathValue("id"))
+		mu.Unlock()
+		if model == "p/primary" {
+			http.Error(w, "primary rejected", http.StatusBadRequest)
+			return
+		}
+		successOnce.Do(func() { close(successReady) })
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(messageResponse{
+			Info:  messageInfo{ID: "msg-code-switch"},
+			Parts: []messagePart{{Type: "text", Text: "ok"}},
+		})
+	})
+	mux.HandleFunc("DELETE /session/{id}", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("GET /session/{id}/children", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]sessionResponse{})
+	})
+	mux.HandleFunc("GET /session/{id}/message", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]sessionMessage{})
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	r := newTestRunner(config.OpenCodeConfig{
+		Endpoint:     srv.URL,
+		Model:        "p/default",
+		StageTimeout: 30,
+	})
+
+	result, err := collectRunResult(t, r.Run(context.Background(), RunRequest{
+		Prompt:     "review this",
+		ToolName:   "submit_review",
+		AgentName:  "reviewer",
+		ModelChain: []string{"p/primary", "p/fallback"},
+	}))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if result == nil || result.ToolArgs == nil {
+		t.Fatal("expected tool result after model switch")
+	}
+
+	mu.Lock()
+	gotModels := append([]string(nil), models...)
+	gotSessionIDs := append([]string(nil), sessionIDs...)
+	mu.Unlock()
+	assertStrings(t, gotModels, []string{"p/primary", "p/primary", "p/primary", "p/fallback"})
+	assertStrings(t, gotSessionIDs, []string{"sess-code-switch", "sess-code-switch", "sess-code-switch", "sess-code-switch"})
+}
+
+func TestRunToolMissDoesNotSwitchModelChain(t *testing.T) {
+	var mu sync.Mutex
+	var models []string
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /event", func(w http.ResponseWriter, _ *http.Request) {
+		flusher := w.(http.Flusher)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		flusher.Flush()
+	})
+	mux.HandleFunc("POST /session", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(sessionResponse{ID: "sess-tool-miss"})
+	})
+	mux.HandleFunc("POST /session/{id}/message", func(w http.ResponseWriter, req *http.Request) {
+		var mr messageRequest
+		if err := json.NewDecoder(req.Body).Decode(&mr); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		mu.Lock()
+		models = append(models, testModelString(mr.Model))
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(messageResponse{
+			Info:  messageInfo{ID: "msg-tool-miss"},
+			Parts: []messagePart{{Type: "text", Text: "fallback text"}},
+		})
+	})
+	mux.HandleFunc("DELETE /session/{id}", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("GET /session/{id}/children", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]sessionResponse{})
+	})
+	mux.HandleFunc("GET /session/{id}/message", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]sessionMessage{})
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	r := newTestRunner(config.OpenCodeConfig{
+		Endpoint:     srv.URL,
+		Model:        "p/default",
+		StageTimeout: 30,
+	})
+
+	result, err := collectRunResult(t, r.Run(context.Background(), RunRequest{
+		Prompt:     "review this",
+		ToolName:   "submit_review",
+		AgentName:  "reviewer",
+		ModelChain: []string{"p/primary", "p/fallback"},
+	}))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if result == nil || result.FallbackText != "fallback text" {
+		t.Fatalf("fallback text = %q, want fallback text", result.FallbackText)
+	}
+
+	mu.Lock()
+	gotModels := append([]string(nil), models...)
+	mu.Unlock()
+	assertStrings(t, gotModels, []string{"p/primary", "p/primary", "p/primary", "p/primary"})
+}
+
+func TestRunRetriesSSEToolErrorWithContinuationPrompt(t *testing.T) {
+	errorPayload := makeSubmitReviewSSE("sess-sse-error", map[string]any{"findings": []any{}})
+	errorPayload = strings.Replace(errorPayload, `"status":"completed"`, `"status":"error"`, 1)
+	successPayload := makeToolCallSSE("sess-sse-error", map[string]any{
+		"summary":  "Recovered",
+		"verdict":  "approve",
+		"findings": []any{},
+	})
+
+	var eventCalls atomic.Int32
+	var prompts []string
+	var mu sync.Mutex
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /event", func(w http.ResponseWriter, req *http.Request) {
+		call := eventCalls.Add(1)
+		flusher := w.(http.Flusher)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		if call == 1 {
+			fmt.Fprint(w, errorPayload)
+		} else {
+			fmt.Fprint(w, successPayload)
+		}
+		flusher.Flush()
+	})
+	mux.HandleFunc("POST /session", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(sessionResponse{ID: "sess-sse-error"})
+	})
+	mux.HandleFunc("POST /session/{id}/message", func(w http.ResponseWriter, req *http.Request) {
+		var mr messageRequest
+		if err := json.NewDecoder(req.Body).Decode(&mr); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if len(mr.Parts) > 0 {
+			mu.Lock()
+			prompts = append(prompts, mr.Parts[0].Text)
+			mu.Unlock()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(messageResponse{
+			Info:  messageInfo{ID: "msg-sse-error"},
+			Parts: []messagePart{{Type: "text", Text: "ok"}},
+		})
+	})
+	mux.HandleFunc("DELETE /session/{id}", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("GET /session/{id}/children", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]sessionResponse{})
+	})
+	mux.HandleFunc("GET /session/{id}/message", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]sessionMessage{})
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	r := newTestRunner(config.OpenCodeConfig{
+		Endpoint:     srv.URL,
+		Model:        "test/model",
+		StageTimeout: 30,
+	})
+
+	result, err := collectRunResult(t, r.Run(context.Background(), RunRequest{
+		Prompt:    "review this",
+		ToolName:  "submit_review",
+		AgentName: "reviewer",
+	}))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if result == nil || result.ToolArgs == nil {
+		t.Fatal("expected tool result after retry")
+	}
+
+	mu.Lock()
+	gotPrompts := append([]string(nil), prompts...)
+	mu.Unlock()
+	if len(gotPrompts) != 2 {
+		t.Fatalf("prompts = %d, want 2", len(gotPrompts))
+	}
+	if gotPrompts[1] != continuationPromptFor() {
+		t.Errorf("prompt[1] = %q, want continuation prompt", gotPrompts[1])
 	}
 }
 
@@ -744,11 +1213,10 @@ func TestSanitizeLogValue(t *testing.T) {
 	}
 }
 
-// makeToolCallSSEForTool produces a valid SSE payload for any tool call.
-func makeToolCallSSEForTool(sessionID, toolName string, args any) string {
+func makeSubmitReviewSSE(sessionID string, args any) string {
 	argsJSON, _ := json.Marshal(args)
 	payload := fmt.Sprintf(`{"type":"message.part.updated","properties":{"part":{"sessionID":%q,"type":"tool","tool":%q,"state":{"status":"completed","input":%s}}}}`,
-		sessionID, toolName, argsJSON)
+		sessionID, "submit_review", argsJSON)
 	return "event: message.part.updated\ndata: " + payload + "\n\n"
 }
 
@@ -767,8 +1235,8 @@ func TestRunSchemaRetry(t *testing.T) {
 		"findings": []any{},
 	}
 
-	invalidSSE := makeToolCallSSEForTool(sessionID, toolName, invalidArgs)
-	validSSE := makeToolCallSSEForTool(sessionID, toolName, validArgs)
+	invalidSSE := makeSubmitReviewSSE(sessionID, invalidArgs)
+	validSSE := makeSubmitReviewSSE(sessionID, validArgs)
 
 	var sseCallCount atomic.Int32
 	var msgCallCount atomic.Int32
@@ -911,7 +1379,7 @@ func TestRunSchemaRetryExhausted(t *testing.T) {
 		"verdict":  "INVALID",
 		"findings": []any{},
 	}
-	invalidSSE := makeToolCallSSEForTool(sessionID, toolName, invalidArgs)
+	invalidSSE := makeSubmitReviewSSE(sessionID, invalidArgs)
 
 	var sseCallCount atomic.Int32
 	var schemaRetryCount atomic.Int32

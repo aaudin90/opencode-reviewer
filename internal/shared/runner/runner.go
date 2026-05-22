@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"github.com/aaudin90/opencode-reviewer/internal/shared/config"
+	"github.com/aaudin90/opencode-reviewer/internal/shared/sse"
 	"github.com/aaudin90/opencode-reviewer/internal/shared/workspace"
 )
 
@@ -229,6 +231,10 @@ func jsonFallbackPromptFor(toolName string) string {
 	)
 }
 
+func continuationPromptFor() string {
+	return "Continue from the current session state and finish the task. If the previous attempt was interrupted by a transient internal error, recover and proceed normally."
+}
+
 // Run executes a single review and streams events on the returned channel.
 // The channel is closed after the final event (RunEvent.Final or RunEvent.Err).
 func (r *Runner) Run(ctx context.Context, req RunRequest) <-chan RunEvent {
@@ -251,7 +257,7 @@ func (r *Runner) run(ctx context.Context, req RunRequest, out chan<- RunEvent) {
 // Precheck creates a throwaway session, sends a minimal deterministic prompt
 // and verifies that the server responds with text. It is intended to be called
 // right after StartServe to fail fast before real review sessions.
-func (r *Runner) Precheck(ctx context.Context, agentName string) error {
+func (r *Runner) Precheck(ctx context.Context, agentName, model string) error {
 	slog.Info("running precheck", "agent", sanitizeLogValue(agentName, 128))
 
 	ctx, cancel := context.WithTimeout(ctx, precheckTimeout)
@@ -263,7 +269,7 @@ func (r *Runner) Precheck(ctx context.Context, agentName string) error {
 	}
 	defer r.cleanupSession(sessionID)
 
-	resp, err := r.sendMessage(ctx, sessionID, RunRequest{Prompt: precheckPrompt, AgentName: agentName})
+	resp, err := r.sendMessage(ctx, sessionID, RunRequest{Prompt: precheckPrompt, AgentName: agentName, Model: model})
 	if err != nil {
 		return fmt.Errorf("send message: %w", err)
 	}
@@ -368,10 +374,15 @@ func (r *Runner) createSession(ctx context.Context) (string, error) {
 }
 
 func (r *Runner) sendMessage(ctx context.Context, sessionID string, runReq RunRequest) (*messageResponse, error) {
+	model := r.cfg.Model
+	if runReq.Model != "" {
+		model = runReq.Model
+	}
+
 	body := messageRequest{
 		Parts: []messagePart{{Type: "text", Text: runReq.Prompt}},
 		Agent: runReq.AgentName,
-		Model: parseModel(r.cfg.Model),
+		Model: parseModel(model),
 	}
 
 	data, err := json.Marshal(body)
@@ -388,6 +399,9 @@ func (r *Runner) sendMessage(ctx context.Context, sessionID string, runReq RunRe
 
 	resp, err := r.httpClient.Do(req) // #nosec G704 -- URL from trusted config
 	if err != nil {
+		if ctx.Err() == nil {
+			return nil, markRetryable(err)
+		}
 		return nil, err
 	}
 	defer resp.Body.Close()
@@ -396,6 +410,9 @@ func (r *Runner) sendMessage(ctx context.Context, sessionID string, runReq RunRe
 		body, _ := io.ReadAll(resp.Body)
 		snippet := sanitizeLogValue(string(body), 512)
 		slog.Warn("sendMessage HTTP error", "status", resp.StatusCode, "body_snippet", snippet) // #nosec G706 -- sanitized above
+		if isHTTPCodeError(resp.StatusCode) {
+			return nil, newCodeError(resp.StatusCode, "POST /session/{id}/message", string(body))
+		}
 		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, body)
 	}
 
@@ -404,6 +421,36 @@ func (r *Runner) sendMessage(ctx context.Context, sessionID string, runReq RunRe
 		return nil, fmt.Errorf("decode message response: %w", err)
 	}
 	return &mr, nil
+}
+
+type retryableError struct {
+	err error
+}
+
+func (e *retryableError) Error() string {
+	return e.err.Error()
+}
+
+func (e *retryableError) Unwrap() error {
+	return e.err
+}
+
+func markRetryable(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &retryableError{err: err}
+}
+
+func isRetryableError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var retryable *retryableError
+	return errors.As(err, &retryable) || sse.IsRetryable(err)
 }
 
 func (r *Runner) abortSession(sessionID string) error {

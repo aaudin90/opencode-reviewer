@@ -10,4 +10,5 @@ type ReviewStageConfig struct {
 	Runner         *runner.Runner
 	Messages       []string // deprecated plain contents for tests/backward compatibility
 	ReviewMessages []models.ReviewMessage
+	ModelChain     []string
 }

@@ -19,6 +19,15 @@ func makeToolCallSSEGeneric(sessionID, toolName string, args any) string {
 	return "event: message.part.updated\ndata: " + payload + "\n\n"
 }
 
+func reviewToolArgs(reviewerName string) map[string]any {
+	return map[string]any{
+		"reviewer_name": reviewerName,
+		"summary":       "ok",
+		"verdict":       "approve",
+		"findings":      []any{},
+	}
+}
+
 // newPipelineTestServer creates an httptest.Server that fakes the opencode API.
 // It handles health, session creation (with atomic counter), messages, SSE events, children, and deletion.
 // The SSE emits a tool call only for the review session (not the precheck session).

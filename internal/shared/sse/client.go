@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -17,6 +18,36 @@ import (
 type Client struct {
 	httpClient *http.Client
 	url        string
+}
+
+type retryableError struct {
+	err error
+}
+
+func (e *retryableError) Error() string {
+	return e.err.Error()
+}
+
+func (e *retryableError) Unwrap() error {
+	return e.err
+}
+
+func markRetryable(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &retryableError{err: err}
+}
+
+func IsRetryable(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var retryable *retryableError
+	return errors.As(err, &retryable)
 }
 
 // New creates a new SSE client that connects to baseURL/event.
@@ -45,9 +76,20 @@ func (c *Client) WaitForToolResult(ctx context.Context, sessionID, toolName stri
 
 	resp, err := c.httpClient.Do(req) // #nosec G704 -- URL from trusted config
 	if err != nil {
+		if ctx.Err() == nil {
+			return nil, markRetryable(fmt.Errorf("connect to sse: %w", err))
+		}
 		return nil, fmt.Errorf("connect to sse: %w", err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		if isHTTPCodeError(resp.StatusCode) {
+			return nil, newCodeError(resp.StatusCode, "GET /event", string(body))
+		}
+		return nil, fmt.Errorf("unexpected sse status %d: %s", resp.StatusCode, body)
+	}
 
 	return parseStream(resp.Body, sessionID, toolName, childSessions, events)
 }
@@ -83,6 +125,9 @@ func parseStream(
 		case line == "":
 			if len(dataLines) > 0 {
 				raw := []byte(strings.Join(dataLines, ""))
+				if err := extractSessionCodeError(raw); err != nil {
+					return nil, err
+				}
 				var event toolCallEvent
 				if err := json.Unmarshal(raw, &event); err == nil {
 					if sid := event.Properties.Part.SessionID; sid != "" && !knownSessions[sid] {
@@ -96,6 +141,9 @@ func parseStream(
 						}
 					}
 					trySendToolCall(&event, knownSessions, events)
+					if err := extractToolError(&event, sessionID, toolName); err != nil {
+						return nil, err
+					}
 					if args, ok := extractToolArgs(&event, sessionID, toolName); ok {
 						return args, nil
 					}
@@ -111,7 +159,7 @@ func parseStream(
 	}
 
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("sse stream read error: %w", err)
+		return nil, markRetryable(fmt.Errorf("sse stream read error: %w", err))
 	}
 
 	return nil, fmt.Errorf("sse stream ended without %q tool result for session %q", toolName, sessionID)
@@ -153,4 +201,15 @@ func extractToolArgs(event *toolCallEvent, sessionID, toolName string) (json.Raw
 	}
 
 	return part.State.Input, true
+}
+
+func extractToolError(event *toolCallEvent, sessionID, toolName string) error {
+	part := event.Properties.Part
+	if part.Type != "tool" || part.Tool != toolName || part.SessionID != sessionID {
+		return nil
+	}
+	if part.State.Status != "error" {
+		return nil
+	}
+	return markRetryable(fmt.Errorf("tool %q entered error state in session %q", toolName, sessionID))
 }

@@ -38,6 +38,7 @@ type Config struct {
 	Publisher        vcs.Publisher // optional; nil = skip publishing
 	ReviewDumpPath   string        // if set, save writtenReview as JSON after LLM pipeline
 	FastReviewPath   string        // if set, skip LLM stages and load review from this file
+	ModelChain       []string      // primary model followed by fallback models
 }
 
 type Pipeline struct {
@@ -69,10 +70,12 @@ func New(cfg Config) *Pipeline {
 			Runner:         cfg.Runner,
 			Messages:       cfg.Messages,
 			ReviewMessages: cfg.ReviewMessages,
+			ModelChain:     cfg.ModelChain,
 		})
 		p.finalizerStage = NewFinalizerStage(FinalizerStageConfig{
 			Runner:           cfg.FinalizerRunner,
 			FinalizerMessage: cfg.FinalizerMessage,
+			ModelChain:       cfg.ModelChain,
 		})
 	}
 	return p
@@ -194,10 +197,12 @@ func (p *Pipeline) ensureRuntime(ctx context.Context) error {
 	p.reviewStage = NewReviewStage(ReviewStageConfig{
 		Runner:         resources.ReviewerRunner,
 		ReviewMessages: resources.Messages,
+		ModelChain:     resources.ModelChain,
 	})
 	p.finalizerStage = NewFinalizerStage(FinalizerStageConfig{
 		Runner:           resources.FinalizerRunner,
 		FinalizerMessage: resources.FinalizerMessage,
+		ModelChain:       resources.ModelChain,
 	})
 	p.runtimeCleanup = resources.Cleanup
 

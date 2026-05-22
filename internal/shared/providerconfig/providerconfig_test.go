@@ -315,3 +315,34 @@ func TestLoadWithOptions_LegacyEnvFallback(t *testing.T) {
 		t.Error("expected file-provider, fallback env should not override config path")
 	}
 }
+
+func TestDefaultModel(t *testing.T) {
+	data := json.RawMessage(`{
+		"provider": {"p": {"models": {"m": {}}}},
+		"model": "p/m"
+	}`)
+
+	model, err := DefaultModel(data)
+	if err != nil {
+		t.Fatalf("DefaultModel() error = %v", err)
+	}
+	if model != "p/m" {
+		t.Fatalf("DefaultModel() = %q, want p/m", model)
+	}
+}
+
+func TestDefaultModel_Empty(t *testing.T) {
+	model, err := DefaultModel(nil)
+	if err != nil {
+		t.Fatalf("DefaultModel() error = %v", err)
+	}
+	if model != "" {
+		t.Fatalf("DefaultModel() = %q, want empty", model)
+	}
+}
+
+func TestDefaultModel_InvalidJSON(t *testing.T) {
+	if _, err := DefaultModel(json.RawMessage(`not json`)); err == nil {
+		t.Fatal("DefaultModel() error = nil, want error")
+	}
+}

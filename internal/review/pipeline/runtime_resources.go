@@ -10,5 +10,6 @@ type RuntimeResources struct {
 	FinalizerRunner  *runner.Runner
 	Messages         []models.ReviewMessage
 	FinalizerMessage string
+	ModelChain       []string
 	Cleanup          func() error
 }

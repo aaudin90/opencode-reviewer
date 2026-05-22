@@ -130,6 +130,7 @@ File mapping:
 `submit_review.ts`, `submit_final_review.ts`, and `submit_comment_warrior_decision.ts` are built in. Add files under phase `tools` directories only when you need to override a built-in tool or add a custom OpenCode tool.
 
 When files exist in `.opencodereview`, they override the corresponding TOML prompt/provider paths. Scalar settings such as branch, GitLab URL, and timeouts can be set only with an explicit `--config` TOML file or env vars. Keep the model in `provider.json` unless you intentionally need an env or explicit TOML override.
+Model fallback chain priority is `OR_OPENCODE_FALLBACK_MODELS` > `opencode.fallback_models`; the primary model comes from `OR_OPENCODE_MODEL`, `opencode.model`, or `provider.json`.
 
 ## Explicit TOML
 
@@ -144,6 +145,7 @@ project_dir = "/path/to/project"
 [opencode]
   # Prefer setting model in provider.json.
   # model = "llm-proxy/kimi-k2.5"
+  # fallback_models = ["openai/gpt-5", "anthropic/claude-sonnet-4-5"]
   max_steps = 50
   print_logs = false
   # log_level = "DEBUG"
@@ -195,7 +197,8 @@ Common env vars:
 | `OR_DISABLE_CONFIG_DIR_AUTO_DISCOVERY` | Disable `.opencodereview` auto-discovery with `true` or `1` |
 | `OR_PROJECT_DIR` | Project repository path |
 | `OR_BRANCH` | Branch to review |
-| `OR_OPENCODE_MODEL` | LLM model identifier |
+| `OR_OPENCODE_MODEL` | LLM model identifier in `provider/model` format |
+| `OR_OPENCODE_FALLBACK_MODELS` | Comma-separated fallback models in `provider/model` format |
 | `OR_OPENCODE_PRINT_LOGS` | Pass `--print-logs` to `opencode serve` with `true` or `1` |
 | `OR_OPENCODE_LOG_LEVEL` | Pass `--log-level` to `opencode serve`: `DEBUG`, `INFO`, `WARN`, or `ERROR` |
 | `OR_OPENCODE_LOG_DIR` | OpenCode log directory; relative paths are resolved under `project_dir` |

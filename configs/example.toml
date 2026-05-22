@@ -14,7 +14,8 @@
 #   OR_GIT_BASE_BRANCH           Base branch for diff
 #   OR_OPENCODE_ENDPOINT         opencode API endpoint URL
 #   OR_OPENCODE_PORT             opencode port
-#   OR_OPENCODE_MODEL            LLM model identifier
+#   OR_OPENCODE_MODEL            LLM model identifier in provider/model format
+#   OR_OPENCODE_FALLBACK_MODELS  Comma-separated fallback models in provider/model format
 #   OR_OPENCODE_BINARY           Path to opencode binary
 #   OR_OPENCODE_STAGE_TIMEOUT    Timeout per stage in seconds
 #   OR_OPENCODE_MAX_STEPS        Max agent steps per session
@@ -69,6 +70,11 @@ project_dir = "/path/to/your/project"
   # model: LLM model identifier.
   # Prefer setting it in provider.json; use this only for an explicit TOML override.
   # model = "llm-proxy/kimi-k2.5"
+
+  # fallback_models: optional fallback chain after the primary model.
+  # Every value must use provider/model format. Empty values are ignored.
+  # Primary model comes from opencode.model or provider.json model.
+  # fallback_models = ["openai/gpt-5", "anthropic/claude-sonnet-4-5"]
 
   # binary: path to the opencode CLI binary.
   # Default: "opencode" (resolved via PATH).

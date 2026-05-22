@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 )
@@ -75,6 +76,7 @@ func applyDefaults(cfg *Config) {
 //	OR_OPENCODE_ENDPOINT         → opencode.endpoint
 //	OR_OPENCODE_PORT             → opencode.port
 //	OR_OPENCODE_MODEL            → opencode.model
+//	OR_OPENCODE_FALLBACK_MODELS  → opencode.fallback_models
 //	OR_OPENCODE_BINARY           → opencode.binary
 //	OR_OPENCODE_STAGE_TIMEOUT    → opencode.stage_timeout
 //	OR_OPENCODE_MAX_STEPS        → opencode.max_steps
@@ -106,6 +108,10 @@ func ApplyEnvOverrides(cfg *Config) {
 
 	if v := os.Getenv("OR_OPENCODE_MODEL"); v != "" {
 		cfg.OpenCode.Model = v
+	}
+
+	if v := os.Getenv("OR_OPENCODE_FALLBACK_MODELS"); v != "" {
+		cfg.OpenCode.FallbackModels = normalizeModelList(strings.Split(v, ","))
 	}
 
 	if v := os.Getenv("OR_OPENCODE_BINARY"); v != "" {

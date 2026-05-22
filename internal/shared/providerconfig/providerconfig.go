@@ -66,6 +66,19 @@ func LoadWithOptions(configPath string, opts Options) (json.RawMessage, error) {
 	return data, nil
 }
 
+func DefaultModel(data json.RawMessage) (string, error) {
+	if len(data) == 0 {
+		return "", nil
+	}
+
+	var cfg configShape
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return "", fmt.Errorf("parse JSON: %w", err)
+	}
+
+	return cfg.Model, nil
+}
+
 // Validate checks that provider config JSON has required fields.
 func Validate(data json.RawMessage) error {
 	var cfg configShape
