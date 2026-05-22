@@ -66,6 +66,14 @@ func (l *Loader) LoadRuntime(_ context.Context) (*pipeline.RuntimeResources, err
 	if err != nil {
 		return nil, fmt.Errorf("load provider config: %w", err)
 	}
+	providerModel, err := providerconfig.DefaultModel(providerJSON)
+	if err != nil {
+		return nil, fmt.Errorf("read provider model: %w", err)
+	}
+	modelChain, err := cfg.OpenCode.ModelChain(providerModel)
+	if err != nil {
+		return nil, fmt.Errorf("resolve model chain: %w", err)
+	}
 
 	agentPath := resolveRelativePath(resolutionBaseDir, cfg.Pipeline.ReviewAgentPromptPath)
 	agentPrompt, err := agentconfig.LoadWithOptions(agentPath, cfg.Pipeline.ReviewAgentPrompt, agentconfig.Options{
@@ -185,6 +193,7 @@ func (l *Loader) LoadRuntime(_ context.Context) (*pipeline.RuntimeResources, err
 		FinalizerRunner:  runner.New(cfg.OpenCode, projectDir, finalizerWS, "finalizer"),
 		Messages:         messages,
 		FinalizerMessage: finalizerMessage,
+		ModelChain:       modelChain,
 		Cleanup: func() error {
 			reviewerErr := reviewerWS.Cleanup()
 			finalizerErr := finalizerWS.Cleanup()

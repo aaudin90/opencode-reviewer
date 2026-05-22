@@ -58,6 +58,13 @@ func (l *Loader) LoadRuntime(_ context.Context) (*RuntimeResources, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load provider config: %w", err)
 	}
+	providerModel, err := providerconfig.DefaultModel(providerJSON)
+	if err != nil {
+		return nil, fmt.Errorf("read provider model: %w", err)
+	}
+	if _, err := cfg.OpenCode.ModelChain(providerModel); err != nil {
+		return nil, fmt.Errorf("resolve model chain: %w", err)
+	}
 
 	agentPrompt, err := loadText(effectiveConfigDir, "comment-warrior/agent.md", "OR_COMMENT_WARRIOR_AGENT_PROMPT_PATH", defaultAgentPrompt, useLegacyEnv)
 	if err != nil {

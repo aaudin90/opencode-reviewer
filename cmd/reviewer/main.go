@@ -50,7 +50,8 @@ Config file (TOML) sections:
   [opencode]
     endpoint                API endpoint URL (optional, connects to running instance)
     port                    Port for opencode subprocess (dynamic OS port if not set)
-    model                   Optional LLM model override; prefer provider.json
+    model                   Optional LLM model override in provider/model format; prefer provider.json
+    fallback_models         Optional fallback model chain after the primary provider/model
     binary                  Path to opencode binary (default: opencode)
     stage_timeout           Timeout per stage in seconds (default: 600)
     max_steps               Max agent steps per session (default: 50)
@@ -95,6 +96,7 @@ Environment variables:
   OR_OPENCODE_ENDPOINT         opencode API endpoint URL (overrides opencode.endpoint)
   OR_OPENCODE_PORT             opencode port (overrides opencode.port)
   OR_OPENCODE_MODEL            LLM model identifier (overrides opencode.model)
+  OR_OPENCODE_FALLBACK_MODELS  Comma-separated fallback models in provider/model format
   OR_OPENCODE_BINARY           Path to opencode binary (overrides opencode.binary)
   OR_OPENCODE_STAGE_TIMEOUT    Timeout per stage in seconds (overrides opencode.stage_timeout)
   OR_OPENCODE_MAX_STEPS        Max agent steps per session (overrides opencode.max_steps)
