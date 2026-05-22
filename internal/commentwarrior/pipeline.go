@@ -110,7 +110,7 @@ func (p *Pipeline) runProcessableDiscussions(ctx context.Context, processable []
 	}
 	p.runner = resources.Runner
 	defer resources.Runner.StopServe()
-	if err := resources.Runner.Precheck(ctx, "comment-warrior"); err != nil {
+	if err := resources.Runner.Precheck(ctx, "comment-warrior", ""); err != nil {
 		return 0, fmt.Errorf("precheck: %w", err)
 	}
 	diffPath, err := p.prepareDiff()

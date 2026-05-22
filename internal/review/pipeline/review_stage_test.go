@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/aaudin90/opencode-reviewer/internal/shared/config"
 	"github.com/aaudin90/opencode-reviewer/internal/shared/runner"
@@ -61,6 +63,144 @@ func TestReviewStage_Run_SingleSuccess(t *testing.T) {
 	}
 	if stats[0].Cost <= 0 {
 		t.Error("stats.Cost should be > 0")
+	}
+}
+
+func TestReviewStage_Run_PreservesMessageOrder(t *testing.T) {
+	var sessionCounter atomic.Int32
+	var mu sync.Mutex
+	completed := map[string]map[string]any{}
+	costBySession := map[string]float64{}
+	fastDone := make(chan struct{})
+
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /global/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	mux.HandleFunc("POST /session", func(w http.ResponseWriter, _ *http.Request) {
+		n := sessionCounter.Add(1)
+		id := fmt.Sprintf("sess-%d", n)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"id": id})
+	})
+
+	mux.HandleFunc("POST /session/{id}/message", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Parts []struct {
+				Text string `json:"text"`
+			} `json:"parts"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		prompt := ""
+		if len(req.Parts) > 0 {
+			prompt = req.Parts[0].Text
+		}
+
+		switch prompt {
+		case "slow review":
+			<-fastDone
+			mu.Lock()
+			completed[r.PathValue("id")] = reviewToolArgs("first")
+			costBySession[r.PathValue("id")] = 1
+			mu.Unlock()
+		case "fast review":
+			mu.Lock()
+			completed[r.PathValue("id")] = reviewToolArgs("second")
+			costBySession[r.PathValue("id")] = 2
+			mu.Unlock()
+			close(fastDone)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"info":  map[string]any{"id": "msg-1", "tokens": map[string]any{"input": 0, "output": 1}},
+			"parts": []map[string]any{{"type": "text", "text": "ok"}},
+		})
+	})
+
+	mux.HandleFunc("GET /event", func(w http.ResponseWriter, r *http.Request) {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "no flusher", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.WriteHeader(http.StatusOK)
+
+		ticker := time.NewTicker(5 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-ticker.C:
+				mu.Lock()
+				for sessionID, args := range completed {
+					fmt.Fprint(w, makeToolCallSSEGeneric(sessionID, "submit_review", args))
+				}
+				mu.Unlock()
+				flusher.Flush()
+			}
+		}
+	})
+
+	mux.HandleFunc("GET /session/{id}/message", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		cost := costBySession[r.PathValue("id")]
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]map[string]any{
+			{"info": map[string]any{"role": "assistant", "cost": cost, "tokens": map[string]any{"input": 1, "output": 1}}},
+		})
+	})
+
+	mux.HandleFunc("GET /session/{id}/children", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]any{})
+	})
+
+	mux.HandleFunc("DELETE /session/{id}", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	r := runner.New(config.OpenCodeConfig{
+		Endpoint:     srv.URL,
+		Model:        "test/model",
+		StageTimeout: 10,
+	}, "/tmp", nil, "test")
+
+	stage := NewReviewStage(ReviewStageConfig{
+		Runner:   r,
+		Messages: []string{"slow review", "fast review"},
+	})
+
+	results, stats, err := stage.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("len(results) = %d, want 2", len(results))
+	}
+	if results[0].ReviewerName != "first" {
+		t.Errorf("results[0].ReviewerName = %q, want first", results[0].ReviewerName)
+	}
+	if results[1].ReviewerName != "second" {
+		t.Errorf("results[1].ReviewerName = %q, want second", results[1].ReviewerName)
+	}
+	if len(stats) != 2 {
+		t.Fatalf("len(stats) = %d, want 2", len(stats))
+	}
+	if stats[0].Cost != 1 {
+		t.Errorf("stats[0].Cost = %v, want 1", stats[0].Cost)
+	}
+	if stats[1].Cost != 2 {
+		t.Errorf("stats[1].Cost = %v, want 2", stats[1].Cost)
 	}
 }
 

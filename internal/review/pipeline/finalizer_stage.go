@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -15,6 +16,7 @@ import (
 type FinalizerStage struct {
 	runner           *runner.Runner
 	finalizerMessage string
+	models           []string
 }
 
 // NewFinalizerStage creates a FinalizerStage from the given config.
@@ -22,6 +24,7 @@ func NewFinalizerStage(cfg FinalizerStageConfig) *FinalizerStage {
 	return &FinalizerStage{
 		runner:           cfg.Runner,
 		finalizerMessage: cfg.FinalizerMessage,
+		models:           normalizeModelChain(cfg.ModelChain),
 	}
 }
 
@@ -31,9 +34,6 @@ func (s *FinalizerStage) Run(ctx context.Context, phase1Results []*models.Review
 		return nil, runner.SessionStats{}, fmt.Errorf("start finalizer serve: %w", err)
 	}
 	defer s.runner.StopServe()
-	if err := s.runner.Precheck(ctx, "finalizer"); err != nil {
-		return nil, runner.SessionStats{}, fmt.Errorf("finalizer precheck: %w", err)
-	}
 	return s.runFinalizerReview(ctx, phase1Results)
 }
 
@@ -44,18 +44,9 @@ func (s *FinalizerStage) runFinalizerReview(ctx context.Context, phase1Results [
 	}
 	userMessage := s.finalizerMessage + "\n\n## Phase 1 Results\n\n```json\n" + string(serialized) + "\n```"
 
-	runResult, err := collectRunResult(ctx, s.runner, runner.RunRequest{
-		Prompt:     userMessage,
-		ToolName:   "submit_final_review",
-		PromptPath: "finalizer",
-		AgentName:  "finalizer",
-		ValidateFunc: func(data json.RawMessage) error {
-			return review.ParseFinalToolArgs(data).ParseErr
-		},
-		SchemaHint: finalizerSchemaHint,
-	})
+	runResult, err := s.runFinalizerWithFallback(ctx, userMessage)
 	if err != nil {
-		return nil, runner.SessionStats{}, fmt.Errorf("finalizer session: %w", err)
+		return nil, runner.SessionStats{}, err
 	}
 
 	if runResult.ToolArgs != nil {
@@ -81,4 +72,38 @@ func (s *FinalizerStage) runFinalizerReview(ctx context.Context, phase1Results [
 
 	slog.Warn("finalizer: using text fallback")
 	return review.ParseFinal(runResult.FallbackText), runResult.Stats, nil
+}
+
+func (s *FinalizerStage) runFinalizerWithFallback(ctx context.Context, userMessage string) (*runner.RunResult, error) {
+	var errs []error
+	for idx, model := range s.models {
+		if err := s.runner.Precheck(ctx, "finalizer", model); err != nil {
+			if isContextErr(err) {
+				return nil, fmt.Errorf("finalizer precheck model %q: %w", model, err)
+			}
+			slog.Warn("finalizer precheck failed, trying next model", "model", model, "error", err)
+			errs = append(errs, fmt.Errorf("precheck %s: %w", modelLabel(model), err))
+			continue
+		}
+
+		runResult, err := collectRunResult(ctx, s.runner, runner.RunRequest{
+			Prompt:     userMessage,
+			ToolName:   "submit_final_review",
+			PromptPath: "finalizer",
+			AgentName:  "finalizer",
+			ModelChain: s.models[idx:],
+			ValidateFunc: func(data json.RawMessage) error {
+				return review.ParseFinalToolArgs(data).ParseErr
+			},
+			SchemaHint: finalizerSchemaHint,
+		})
+		if err == nil {
+			return runResult, nil
+		}
+		if isContextErr(err) {
+			return nil, fmt.Errorf("finalizer session model chain %v: %w", s.models[idx:], err)
+		}
+		return nil, fmt.Errorf("finalizer session failed for model chain %v: %w", s.models[idx:], err)
+	}
+	return nil, fmt.Errorf("finalizer session failed for all models %v: %w", s.models, errors.Join(errs...))
 }
