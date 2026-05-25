@@ -17,3 +17,10 @@ func parseModel(model string) *messageModel {
 		ModelID:    parts[1],
 	}
 }
+
+func formatModel(model *messageModel) string {
+	if model == nil || model.ProviderID == "" || model.ModelID == "" {
+		return ""
+	}
+	return model.ProviderID + "/" + model.ModelID
+}

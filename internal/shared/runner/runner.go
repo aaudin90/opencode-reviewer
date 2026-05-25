@@ -27,6 +27,7 @@ import (
 const (
 	healthPollInterval = 500 * time.Millisecond
 	healthTimeout      = 30 * time.Second
+	healthBodyLimit    = 1024
 	stopGracePeriod    = 10 * time.Second
 	abortTimeout       = 5 * time.Second
 	maxRetries         = 3
@@ -315,35 +316,56 @@ func (r *Runner) waitHealthy(ctx context.Context, procDone <-chan error) error {
 	ticker := time.NewTicker(healthPollInterval)
 	defer ticker.Stop()
 
+	var lastErr error
 	for {
-		if r.checkHealth(ctx) {
+		if err := r.checkHealth(ctx); err == nil {
 			return nil
+		} else if lastErr == nil || (!errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)) {
+			lastErr = err
 		}
 
 		select {
 		case <-ctx.Done():
+			if lastErr != nil {
+				return fmt.Errorf("health check timed out after last failure: %v: %w", lastErr, ctx.Err())
+			}
 			return fmt.Errorf("health check timed out: %w", ctx.Err())
 		case err := <-procDone:
+			if lastErr != nil {
+				return fmt.Errorf("process exited before becoming healthy after last failure: %v: %w", lastErr, err)
+			}
 			return fmt.Errorf("process exited before becoming healthy: %w", err)
 		case <-ticker.C:
 		}
 	}
 }
 
-func (r *Runner) checkHealth(ctx context.Context) bool {
+func (r *Runner) checkHealth(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, r.baseURL+"/global/health", nil)
 	if err != nil {
-		return false
+		return fmt.Errorf("build health request: %w", err)
 	}
 
 	resp, err := r.httpClient.Do(req) // #nosec G704 -- URL from trusted config
 	if err != nil {
-		return false
+		return fmt.Errorf("health request failed: %w", err)
 	}
 	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, resp.Body)
 
-	return resp.StatusCode == http.StatusOK
+	if resp.StatusCode == http.StatusOK {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return nil
+	}
+
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, healthBodyLimit))
+	if readErr != nil {
+		return fmt.Errorf("health returned %s and body read failed: %w", resp.Status, readErr)
+	}
+	text := strings.TrimSpace(string(body))
+	if text == "" {
+		return fmt.Errorf("health returned %s with empty body", resp.Status)
+	}
+	return fmt.Errorf("health returned %s: %s", resp.Status, sanitizeLogValue(text, healthBodyLimit))
 }
 
 func (r *Runner) createSession(ctx context.Context) (string, error) {
@@ -548,10 +570,7 @@ func (r *Runner) fetchSessionStats(sessionID string) (SessionStats, error) {
 		if m.Info.Role != "assistant" {
 			continue
 		}
-		stats = stats.Add(SessionStats{
-			Cost:   m.Info.Cost,
-			Tokens: m.Info.Tokens,
-		})
+		stats = stats.WithMessage(m.Info, "")
 	}
 	return stats, nil
 }

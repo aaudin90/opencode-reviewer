@@ -173,13 +173,15 @@ func TestReviewStage_FallbackPrecheckPrimaryFails(t *testing.T) {
 		Messages:   []string{"review"},
 		ModelChain: []string{"p/primary", "p/fallback"},
 	})
-	results, _, err := stage.Run(context.Background())
+	results, stats, err := stage.Run(context.Background())
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if len(results) != 1 {
 		t.Fatalf("len(results) = %d, want 1", len(results))
 	}
+	assertStrings(t, stats[0].Models, []string{"p/fallback"})
+	assertStrings(t, stats[0].FallbackModels, []string{"p/fallback"})
 	prechecks, runs := srv.seen()
 	assertStrings(t, prechecks, []string{"p/primary", "p/fallback"})
 	assertStrings(t, runs, []string{"p/fallback"})
@@ -199,13 +201,15 @@ func TestReviewStage_FallbackReviewerFailureRetriesNextModel(t *testing.T) {
 		Messages:   []string{"review"},
 		ModelChain: []string{"p/primary", "p/fallback"},
 	})
-	results, _, err := stage.Run(context.Background())
+	results, stats, err := stage.Run(context.Background())
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if len(results) != 1 {
 		t.Fatalf("len(results) = %d, want 1", len(results))
 	}
+	assertStrings(t, stats[0].Models, []string{"p/primary", "p/fallback"})
+	assertStrings(t, stats[0].FallbackModels, []string{"p/fallback"})
 	prechecks, runs := srv.seen()
 	assertStrings(t, prechecks, []string{"p/primary"})
 	assertStrings(t, runs, []string{"p/primary", "p/primary", "p/primary", "p/fallback"})
@@ -226,13 +230,15 @@ func TestFinalizerStage_FallbackFinalizerFailureRetriesNextModelSameSession(t *t
 		FinalizerMessage: "finalize",
 		ModelChain:       []string{"p/primary", "p/fallback"},
 	})
-	result, _, err := stage.Run(context.Background(), []*models.ReviewResult{{Summary: "ok", Verdict: "approve"}})
+	result, stats, err := stage.Run(context.Background(), []*models.ReviewResult{{Summary: "ok", Verdict: "approve"}})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if result.Verdict != "approve" {
 		t.Fatalf("verdict = %q, want approve", result.Verdict)
 	}
+	assertStrings(t, stats.Models, []string{"p/primary", "p/fallback"})
+	assertStrings(t, stats.FallbackModels, []string{"p/fallback"})
 	prechecks, runs := srv.seen()
 	assertStrings(t, prechecks, []string{"p/primary"})
 	assertStrings(t, runs, []string{"p/primary", "p/primary", "p/primary", "p/fallback"})
@@ -250,13 +256,15 @@ func TestFinalizerStage_FallbackStartsFromPrimary(t *testing.T) {
 		FinalizerMessage: "finalize",
 		ModelChain:       []string{"p/primary", "p/fallback"},
 	})
-	result, _, err := stage.Run(context.Background(), []*models.ReviewResult{{Summary: "ok", Verdict: "approve"}})
+	result, stats, err := stage.Run(context.Background(), []*models.ReviewResult{{Summary: "ok", Verdict: "approve"}})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if result.Verdict != "approve" {
 		t.Fatalf("verdict = %q, want approve", result.Verdict)
 	}
+	assertStrings(t, stats.Models, []string{"p/primary"})
+	assertStrings(t, stats.FallbackModels, nil)
 	prechecks, runs := srv.seen()
 	assertStrings(t, prechecks, []string{"p/primary"})
 	assertStrings(t, runs, []string{"p/primary"})
