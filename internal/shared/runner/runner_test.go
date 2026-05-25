@@ -94,6 +94,7 @@ func TestWaitHealthy(t *testing.T) {
 func TestWaitHealthy_Timeout(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte("warming up"))
 	}))
 	defer srv.Close()
 
@@ -108,6 +109,24 @@ func TestWaitHealthy_Timeout(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "timed out") {
 		t.Errorf("error = %v, want timed out", err)
+	}
+	if !strings.Contains(err.Error(), "503 Service Unavailable: warming up") {
+		t.Errorf("error = %v, want last health status and body", err)
+	}
+}
+
+func TestWaitHealthy_TimeoutIncludesRequestError(t *testing.T) {
+	r := newTestRunner(config.OpenCodeConfig{Endpoint: "http://127.0.0.1:1"})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	err := r.waitHealthy(ctx, nil)
+	if err == nil {
+		t.Fatal("waitHealthy should return error on timeout")
+	}
+	if !strings.Contains(err.Error(), "health request failed") {
+		t.Errorf("error = %v, want request failure", err)
 	}
 }
 
