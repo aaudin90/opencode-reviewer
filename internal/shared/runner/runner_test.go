@@ -289,6 +289,18 @@ func assertStrings(t *testing.T, got, want []string) {
 	}
 }
 
+func assertModelCostStrings(t *testing.T, got, want []ModelCost) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("len = %d, want %d; got %#v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i].Model != want[i].Model || got[i].Cost != want[i].Cost || got[i].Tokens.Input != want[i].Tokens.Input || got[i].Tokens.Output != want[i].Tokens.Output {
+			t.Fatalf("[%d] = %#v, want %#v; got %#v", i, got[i], want[i], got)
+		}
+	}
+}
+
 func TestPrecheckSendsDeterministicPrompt(t *testing.T) {
 	var gotPrompt string
 	var gotAgent string
@@ -849,6 +861,8 @@ func TestRunCodeErrorSwitchesModelInSameSession(t *testing.T) {
 	if result == nil || result.ToolArgs == nil {
 		t.Fatal("expected tool result after model switch")
 	}
+	assertStrings(t, result.Stats.Models, []string{"p/primary", "p/fallback"})
+	assertStrings(t, result.Stats.FallbackModels, []string{"p/fallback"})
 
 	mu.Lock()
 	gotModels := append([]string(nil), models...)
@@ -921,11 +935,88 @@ func TestRunToolMissDoesNotSwitchModelChain(t *testing.T) {
 	if result == nil || result.FallbackText != "fallback text" {
 		t.Fatalf("fallback text = %q, want fallback text", result.FallbackText)
 	}
+	assertStrings(t, result.Stats.Models, []string{"p/primary"})
+	assertStrings(t, result.Stats.FallbackModels, nil)
 
 	mu.Lock()
 	gotModels := append([]string(nil), models...)
 	mu.Unlock()
 	assertStrings(t, gotModels, []string{"p/primary", "p/primary", "p/primary", "p/primary"})
+}
+
+func TestRunConfiguredModelChainMarksFallbackAfterPrecheckSkip(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /event", func(w http.ResponseWriter, _ *http.Request) {
+		flusher := w.(http.Flusher)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, makeToolCallSSE("sess-skip-primary", map[string]any{
+			"summary":  "ok",
+			"verdict":  "approve",
+			"findings": []any{},
+		}))
+		flusher.Flush()
+	})
+	mux.HandleFunc("POST /session", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(sessionResponse{ID: "sess-skip-primary"})
+	})
+	mux.HandleFunc("POST /session/{id}/message", func(w http.ResponseWriter, req *http.Request) {
+		var mr messageRequest
+		if err := json.NewDecoder(req.Body).Decode(&mr); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if got := testModelString(mr.Model); got != "p/fallback" {
+			t.Fatalf("model = %q, want p/fallback", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(messageResponse{
+			Info:  messageInfo{ID: "msg-skip-primary"},
+			Parts: []messagePart{{Type: "text", Text: "ok"}},
+		})
+	})
+	mux.HandleFunc("DELETE /session/{id}", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("GET /session/{id}/children", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]sessionResponse{})
+	})
+	mux.HandleFunc("GET /session/{id}/message", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]sessionMessage{
+			{Info: sessionMessageInfo{
+				Role:       "assistant",
+				Cost:       0.05,
+				Tokens:     tokenUsage{Input: 10, Output: 5},
+				ProviderID: "p",
+				ModelID:    "fallback",
+			}},
+		})
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	r := newTestRunner(config.OpenCodeConfig{
+		Endpoint:     srv.URL,
+		Model:        "p/default",
+		StageTimeout: 30,
+	})
+
+	result, err := collectRunResult(t, r.Run(context.Background(), RunRequest{
+		Prompt:               "review this",
+		ToolName:             "submit_review",
+		AgentName:            "reviewer",
+		ModelChain:           []string{"p/fallback"},
+		ConfiguredModelChain: []string{"p/primary", "p/fallback"},
+	}))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	assertStrings(t, result.Stats.Models, []string{"p/fallback"})
+	assertStrings(t, result.Stats.FallbackModels, []string{"p/fallback"})
 }
 
 func TestRunRetriesSSEToolErrorWithContinuationPrompt(t *testing.T) {
@@ -1178,13 +1269,13 @@ func TestGetSessionStats_WithChildSessions(t *testing.T) {
 	mux.HandleFunc("GET /session/parent/message", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode([]sessionMessage{
-			{Info: sessionMessageInfo{Role: "assistant", Cost: 0.10, Tokens: tokenUsage{Input: 100, Output: 50}}},
+			{Info: sessionMessageInfo{Role: "assistant", Cost: 0.10, Tokens: tokenUsage{Input: 100, Output: 50}, ProviderID: "p", ModelID: "primary"}},
 		})
 	})
 	mux.HandleFunc("GET /session/child1/message", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode([]sessionMessage{
-			{Info: sessionMessageInfo{Role: "assistant", Cost: 0.05, Tokens: tokenUsage{Input: 50, Output: 25}}},
+			{Info: sessionMessageInfo{Role: "assistant", Cost: 0.05, Tokens: tokenUsage{Input: 50, Output: 25}, Model: &messageModel{ProviderID: "p", ModelID: "fallback"}}},
 		})
 	})
 
@@ -1206,6 +1297,11 @@ func TestGetSessionStats_WithChildSessions(t *testing.T) {
 	if stats.Tokens.Output != 75 {
 		t.Errorf("Tokens.Output = %d, want 75", stats.Tokens.Output)
 	}
+	assertStrings(t, stats.Models, []string{"p/primary", "p/fallback"})
+	assertModelCostStrings(t, stats.ModelCosts, []ModelCost{
+		{Model: "p/primary", Cost: 0.10, Tokens: tokenUsage{Input: 100, Output: 50}},
+		{Model: "p/fallback", Cost: 0.05, Tokens: tokenUsage{Input: 50, Output: 25}},
+	})
 }
 
 func TestSanitizeLogValue(t *testing.T) {

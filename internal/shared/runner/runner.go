@@ -570,10 +570,7 @@ func (r *Runner) fetchSessionStats(sessionID string) (SessionStats, error) {
 		if m.Info.Role != "assistant" {
 			continue
 		}
-		stats = stats.Add(SessionStats{
-			Cost:   m.Info.Cost,
-			Tokens: m.Info.Tokens,
-		})
+		stats = stats.WithMessage(m.Info, "")
 	}
 	return stats, nil
 }

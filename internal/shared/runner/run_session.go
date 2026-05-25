@@ -19,6 +19,11 @@ type sseResult struct {
 	err  error
 }
 
+type sentMessageStat struct {
+	info           sessionMessageInfo
+	requestedModel string
+}
+
 type runSession struct {
 	r             *Runner
 	req           RunRequest
@@ -31,6 +36,8 @@ type runSession struct {
 	pollCancel    context.CancelFunc
 	pollDone      chan struct{}
 	runStart      time.Time
+	usedModels    []string
+	sentMessages  map[string]sentMessageStat
 }
 
 func (s *runSession) execute(ctx context.Context) {
@@ -74,6 +81,7 @@ func (s *runSession) execute(ctx context.Context) {
 
 	for {
 		slog.Info("sending message to session", "session", s.sessionID, "attempt", attempt, "model", currentModel)
+		s.usedModels = appendUniqueModels(s.usedModels, currentModel)
 		data, err := s.sendAndAwaitTool(prompt, currentModel)
 		if err != nil {
 			attempt++
@@ -148,7 +156,10 @@ func (s *runSession) modelChain() []string {
 	if len(s.req.ModelChain) > 0 {
 		return s.req.ModelChain
 	}
-	return []string{s.req.Model}
+	if s.req.Model != "" {
+		return []string{s.req.Model}
+	}
+	return []string{s.r.cfg.Model}
 }
 
 func runModelLabel(model string) string {
@@ -187,6 +198,8 @@ func (s *runSession) sendAndAwaitTool(prompt, model string) (json.RawMessage, er
 		}
 		return nil, fmt.Errorf("send message: %w", err)
 	}
+	s.usedModels = appendUniqueModels(s.usedModels, resp.Info.modelString())
+	s.recordSentMessage(resp, model)
 	t := resp.Info.Tokens
 	slog.Info("message completed", "message", resp.Info.ID,
 		"tokens_input", t.Input, "tokens_output", t.Output, "elapsed", time.Since(msgStart).String())
@@ -219,6 +232,9 @@ func (s *runSession) emitToolResult(toolData json.RawMessage, attempt int) {
 	slog.Info("review completed via tool call",
 		"session", s.sessionID, "prompt", s.req.PromptPath, "tool", s.req.ToolName, "attempt", attempt,
 		"elapsed", time.Since(s.runStart).String(), "cost", stats.Cost,
+		"models", stats.Models,
+		"fallback_models", stats.FallbackModels,
+		"model_costs", stats.ModelCosts,
 		"tokens_input", stats.Tokens.Input, "tokens_output", stats.Tokens.Output,
 		"tokens_reasoning", stats.Tokens.Reasoning,
 		"tokens_cache_read", stats.Tokens.Cache.Read, "tokens_cache_write", stats.Tokens.Cache.Write,
@@ -254,6 +270,8 @@ func (s *runSession) jsonFallback(lastToolData json.RawMessage, model string) {
 		s.out <- RunEvent{Err: fmt.Errorf("json fallback message: %w", err)}
 		return
 	}
+	s.usedModels = appendUniqueModels(s.usedModels, resp.Info.modelString())
+	s.recordSentMessage(resp, model)
 
 	stats := s.cleanup()
 	fallbackText := s.r.extractText(resp.Parts)
@@ -261,6 +279,9 @@ func (s *runSession) jsonFallback(lastToolData json.RawMessage, model string) {
 		"session", s.sessionID, "prompt", s.req.PromptPath, "tool", s.req.ToolName,
 		"elapsed", time.Since(s.runStart).String(), "msg_elapsed", time.Since(msgStart).String(),
 		"length", len(fallbackText), "cost", stats.Cost,
+		"models", stats.Models,
+		"fallback_models", stats.FallbackModels,
+		"model_costs", stats.ModelCosts,
 		"tokens_input", stats.Tokens.Input, "tokens_output", stats.Tokens.Output,
 		"tokens_reasoning", stats.Tokens.Reasoning,
 		"tokens_cache_read", stats.Tokens.Cache.Read, "tokens_cache_write", stats.Tokens.Cache.Write,
@@ -277,6 +298,43 @@ func (s *runSession) cleanup() SessionStats {
 	s.pollCancel()
 	<-s.pollDone
 	stats := s.r.getSessionStats(s.sessionID, s.childSessions)
+	stats.Models = appendUniqueModels(s.usedModels, stats.Models...)
+	hadSessionMessages := stats.HasMessages()
+	for _, sent := range s.sentMessages {
+		if stats.HasMessageID(sent.info.ID) || hadSessionMessages {
+			continue
+		}
+		stats = stats.WithMessage(sent.info, sent.requestedModel)
+	}
+	stats = stats.WithFallbackModels(s.configuredModelChain())
 	s.r.cleanupSession(s.sessionID)
 	return stats
+}
+
+func (s *runSession) configuredModelChain() []string {
+	if len(s.req.ConfiguredModelChain) > 0 {
+		return s.req.ConfiguredModelChain
+	}
+	return s.modelChain()
+}
+
+func (s *runSession) recordSentMessage(resp *messageResponse, requestedModel string) {
+	if resp == nil || resp.Info.ID == "" {
+		return
+	}
+	if s.sentMessages == nil {
+		s.sentMessages = make(map[string]sentMessageStat)
+	}
+	s.sentMessages[resp.Info.ID] = sentMessageStat{
+		info: sessionMessageInfo{
+			ID:         resp.Info.ID,
+			Role:       "assistant",
+			Cost:       resp.Info.Cost,
+			Tokens:     resp.Info.Tokens,
+			ProviderID: resp.Info.ProviderID,
+			ModelID:    resp.Info.ModelID,
+			Model:      resp.Info.Model,
+		},
+		requestedModel: requestedModel,
+	}
 }

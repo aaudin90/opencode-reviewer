@@ -63,6 +63,9 @@ func (s *FinalizerStage) runFinalizerReview(ctx context.Context, phase1Results [
 		slog.Info("finalizer review completed",
 			"verdict", result.Verdict,
 			"findings", len(result.Findings),
+			"models", runResult.Stats.Models,
+			"fallback_models", runResult.Stats.FallbackModels,
+			"model_costs", runResult.Stats.ModelCosts,
 		)
 		if prettyBytes, jsonErr := json.MarshalIndent(runResult.ToolArgs, "", "  "); jsonErr == nil {
 			slog.Debug("finalizer review result", "result", string(prettyBytes))
@@ -87,17 +90,19 @@ func (s *FinalizerStage) runFinalizerWithFallback(ctx context.Context, userMessa
 		}
 
 		runResult, err := collectRunResult(ctx, s.runner, runner.RunRequest{
-			Prompt:     userMessage,
-			ToolName:   "submit_final_review",
-			PromptPath: "finalizer",
-			AgentName:  "finalizer",
-			ModelChain: s.models[idx:],
+			Prompt:               userMessage,
+			ToolName:             "submit_final_review",
+			PromptPath:           "finalizer",
+			AgentName:            "finalizer",
+			ModelChain:           s.models[idx:],
+			ConfiguredModelChain: s.models,
 			ValidateFunc: func(data json.RawMessage) error {
 				return review.ParseFinalToolArgs(data).ParseErr
 			},
 			SchemaHint: finalizerSchemaHint,
 		})
 		if err == nil {
+			runResult.Stats = runResult.Stats.WithFallbackModels(s.models)
 			return runResult, nil
 		}
 		if isContextErr(err) {

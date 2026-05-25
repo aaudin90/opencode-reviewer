@@ -238,15 +238,24 @@ func (p *Pipeline) publishReview(ctx context.Context, review *models.FinalReview
 }
 
 func (p *Pipeline) logTotalStats(reviewerStats []runner.SessionStats, finalizerStats runner.SessionStats, totalSessions int) {
-	var total runner.SessionStats
+	var reviewerTotal runner.SessionStats
 	for _, s := range reviewerStats {
-		total = total.Add(s)
+		reviewerTotal = reviewerTotal.Add(s)
 	}
+	var total runner.SessionStats
+	total = total.Add(reviewerTotal)
 	total = total.Add(finalizerStats)
 
 	slog.Info("total review stats",
 		"sessions", totalSessions,
 		"cost", total.Cost,
+		"reviewer_models", reviewerTotal.Models,
+		"reviewer_fallback_models", reviewerTotal.FallbackModels,
+		"finalizer_models", finalizerStats.Models,
+		"finalizer_fallback_models", finalizerStats.FallbackModels,
+		"models", total.Models,
+		"fallback_models", total.FallbackModels,
+		"model_costs", total.ModelCosts,
 		"tokens_input", total.Tokens.Input,
 		"tokens_output", total.Tokens.Output,
 		"tokens_reasoning", total.Tokens.Reasoning,

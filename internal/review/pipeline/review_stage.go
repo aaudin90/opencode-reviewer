@@ -102,6 +102,9 @@ func (s *ReviewStage) runAllReviews(ctx context.Context, modelChain []string) ([
 			"reviewer", r.result.ReviewerName,
 			"verdict", r.result.Verdict,
 			"findings", len(r.result.Findings),
+			"models", r.stats.Models,
+			"fallback_models", r.stats.FallbackModels,
+			"model_costs", r.stats.ModelCosts,
 		)
 		resultsByIndex[r.index] = r.result
 		statsByIndex[r.index] = r.stats
@@ -123,11 +126,12 @@ func (s *ReviewStage) runAllReviews(ctx context.Context, modelChain []string) ([
 func (s *ReviewStage) runSingleReview(ctx context.Context, message models.ReviewMessage, idx int, modelChain []string) (*models.ReviewResult, runner.SessionStats, error) {
 	slog.Info("starting review session", "prompt_index", idx, "model_chain", modelChain)
 	runResult, err := collectRunResult(ctx, s.runner, runner.RunRequest{
-		Prompt:     message.Content,
-		ToolName:   "submit_review",
-		PromptPath: fmt.Sprintf("message-%d", idx),
-		AgentName:  "reviewer",
-		ModelChain: modelChain,
+		Prompt:               message.Content,
+		ToolName:             "submit_review",
+		PromptPath:           fmt.Sprintf("message-%d", idx),
+		AgentName:            "reviewer",
+		ModelChain:           modelChain,
+		ConfiguredModelChain: s.models,
 		ValidateFunc: func(data json.RawMessage) error {
 			return review.ParseToolArgs(data).ParseErr
 		},
@@ -138,7 +142,8 @@ func (s *ReviewStage) runSingleReview(ctx context.Context, message models.Review
 	}
 	result := s.parseResult(runResult)
 	result.MessageRef = message.Ref
-	return result, runResult.Stats, nil
+	stats := runResult.Stats.WithFallbackModels(s.models)
+	return result, stats, nil
 }
 
 func (s *ReviewStage) parseResult(runResult *runner.RunResult) *models.ReviewResult {
