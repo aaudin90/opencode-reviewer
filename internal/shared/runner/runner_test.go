@@ -244,6 +244,36 @@ func TestStartServeSetsXDGDirs(t *testing.T) {
 	}
 }
 
+func TestStartServeIgnoresStaleProcDone(t *testing.T) {
+	if os.Getenv("OR_TEST_HELPER_OPENCODE_STALE_PROCDONE") == "1" {
+		helperOpenCodeServe()
+		return
+	}
+
+	dir := t.TempDir()
+	script := filepath.Join(dir, "fake-opencode")
+	body := fmt.Sprintf("#!/bin/sh\nOR_TEST_HELPER_OPENCODE_STALE_PROCDONE=1 exec %q -test.run=TestStartServeIgnoresStaleProcDone -- \"$@\"\n", os.Args[0])
+	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	ws, err := workspace.NewAgent(workspace.Config{}, workspace.AgentSpec{})
+	if err != nil {
+		t.Fatalf("NewAgent: %v", err)
+	}
+	defer func() { _ = ws.Cleanup() }()
+
+	r := New(config.OpenCodeConfig{Binary: script}, dir, ws, "reviewer")
+	r.procDone <- fmt.Errorf("stale process error")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := r.StartServe(ctx); err != nil {
+		t.Fatalf("StartServe: %v", err)
+	}
+	r.StopServe()
+}
+
 func helperOpenCodeServe() {
 	args := os.Args
 	port := ""
