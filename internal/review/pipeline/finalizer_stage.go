@@ -3,7 +3,6 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 
@@ -30,21 +29,22 @@ func NewFinalizerStage(cfg FinalizerStageConfig) *FinalizerStage {
 
 // Run starts the runner, executes the finalizer session and stops the runner.
 func (s *FinalizerStage) Run(ctx context.Context, phase1Results []*models.ReviewResult) (*models.FinalReview, runner.SessionStats, error) {
-	if err := s.runner.StartServe(ctx); err != nil {
-		return nil, runner.SessionStats{}, fmt.Errorf("start finalizer serve: %w", err)
+	models, err := startServeWithModelFallback(ctx, s.runner, "finalizer", "finalizer", s.models)
+	if err != nil {
+		return nil, runner.SessionStats{}, err
 	}
 	defer s.runner.StopServe()
-	return s.runFinalizerReview(ctx, phase1Results)
+	return s.runFinalizerReview(ctx, phase1Results, models)
 }
 
-func (s *FinalizerStage) runFinalizerReview(ctx context.Context, phase1Results []*models.ReviewResult) (*models.FinalReview, runner.SessionStats, error) {
+func (s *FinalizerStage) runFinalizerReview(ctx context.Context, phase1Results []*models.ReviewResult, modelChain []string) (*models.FinalReview, runner.SessionStats, error) {
 	serialized, err := json.MarshalIndent(phase1Results, "", "  ")
 	if err != nil {
 		return nil, runner.SessionStats{}, fmt.Errorf("marshal phase1 results: %w", err)
 	}
 	userMessage := s.finalizerMessage + "\n\n## Phase 1 Results\n\n```json\n" + string(serialized) + "\n```"
 
-	runResult, err := s.runFinalizerWithFallback(ctx, userMessage)
+	runResult, err := s.runFinalizerWithFallback(ctx, userMessage, modelChain)
 	if err != nil {
 		return nil, runner.SessionStats{}, err
 	}
@@ -77,38 +77,25 @@ func (s *FinalizerStage) runFinalizerReview(ctx context.Context, phase1Results [
 	return review.ParseFinal(runResult.FallbackText), runResult.Stats, nil
 }
 
-func (s *FinalizerStage) runFinalizerWithFallback(ctx context.Context, userMessage string) (*runner.RunResult, error) {
-	var errs []error
-	for idx, model := range s.models {
-		if err := s.runner.Precheck(ctx, "finalizer", model); err != nil {
-			if isContextErr(err) {
-				return nil, fmt.Errorf("finalizer precheck model %q: %w", model, err)
-			}
-			slog.Warn("finalizer precheck failed, trying next model", "model", model, "error", err)
-			errs = append(errs, fmt.Errorf("precheck %s: %w", modelLabel(model), err))
-			continue
-		}
-
-		runResult, err := collectRunResult(ctx, s.runner, runner.RunRequest{
-			Prompt:               userMessage,
-			ToolName:             "submit_final_review",
-			PromptPath:           "finalizer",
-			AgentName:            "finalizer",
-			ModelChain:           s.models[idx:],
-			ConfiguredModelChain: s.models,
-			ValidateFunc: func(data json.RawMessage) error {
-				return review.ParseFinalToolArgs(data).ParseErr
-			},
-			SchemaHint: finalizerSchemaHint,
-		})
-		if err == nil {
-			runResult.Stats = runResult.Stats.WithFallbackModels(s.models)
-			return runResult, nil
-		}
-		if isContextErr(err) {
-			return nil, fmt.Errorf("finalizer session model chain %v: %w", s.models[idx:], err)
-		}
-		return nil, fmt.Errorf("finalizer session failed for model chain %v: %w", s.models[idx:], err)
+func (s *FinalizerStage) runFinalizerWithFallback(ctx context.Context, userMessage string, modelChain []string) (*runner.RunResult, error) {
+	runResult, err := collectRunResult(ctx, s.runner, runner.RunRequest{
+		Prompt:               userMessage,
+		ToolName:             "submit_final_review",
+		PromptPath:           "finalizer",
+		AgentName:            "finalizer",
+		ModelChain:           modelChain,
+		ConfiguredModelChain: s.models,
+		ValidateFunc: func(data json.RawMessage) error {
+			return review.ParseFinalToolArgs(data).ParseErr
+		},
+		SchemaHint: finalizerSchemaHint,
+	})
+	if err == nil {
+		runResult.Stats = runResult.Stats.WithFallbackModels(s.models)
+		return runResult, nil
 	}
-	return nil, fmt.Errorf("finalizer session failed for all models %v: %w", s.models, errors.Join(errs...))
+	if isContextErr(err) {
+		return nil, fmt.Errorf("finalizer session model chain %v: %w", modelChain, err)
+	}
+	return nil, fmt.Errorf("finalizer session failed for model chain %v: %w", modelChain, err)
 }

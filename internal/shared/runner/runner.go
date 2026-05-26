@@ -55,6 +55,18 @@ type Runner struct {
 	logFile    *os.File
 }
 
+type processExitedBeforeHealthyError struct {
+	err error
+}
+
+func (e *processExitedBeforeHealthyError) Error() string {
+	return e.err.Error()
+}
+
+func (e *processExitedBeforeHealthyError) Unwrap() error {
+	return e.err
+}
+
 // New creates a Runner for the given config and working directory.
 // For subprocess mode (cfg.Endpoint == ""), baseURL is set in StartServe after
 // a free port is allocated; cfg.Port is used as a hint (or default 4096 as fallback).
@@ -85,6 +97,8 @@ func (r *Runner) StartServe(ctx context.Context) error {
 		defer cancel()
 		return r.waitHealthy(healthCtx, nil)
 	}
+
+	r.StopServe()
 
 	port, err := allocatePort(r.cfg.Port)
 	if err != nil {
@@ -134,22 +148,25 @@ func (r *Runner) StartServe(ctx context.Context) error {
 		return fmt.Errorf("start opencode serve: %w", err)
 	}
 	r.proc = cmd
+	procDone := make(chan error, 1)
+	r.procDone = procDone
 
 	go func() {
 		waitErr := cmd.Wait()
 		if closeErr := r.closeLogFile(); waitErr == nil && closeErr != nil {
 			waitErr = closeErr
 		}
-		r.procDone <- waitErr
+		procDone <- waitErr
 	}()
 
 	healthCtx, cancel := context.WithTimeout(ctx, healthTimeout)
 	defer cancel()
 
-	if err := r.waitHealthy(healthCtx, r.procDone); err != nil {
+	if err := r.waitHealthy(healthCtx, procDone); err != nil {
 		// Process already exited or health timed out — kill if still running.
-		if r.proc.Process != nil {
-			_ = r.proc.Process.Kill()
+		var exited *processExitedBeforeHealthyError
+		if !errors.As(err, &exited) {
+			r.killAndWait(procDone)
 		}
 		r.proc = nil
 		return err
@@ -310,6 +327,19 @@ func (r *Runner) StopServe() {
 		_ = syscall.Kill(-r.proc.Process.Pid, syscall.SIGKILL)
 		<-r.procDone
 	}
+	r.proc = nil
+}
+
+func (r *Runner) killAndWait(procDone <-chan error) {
+	if r.proc == nil || r.proc.Process == nil {
+		return
+	}
+	_ = syscall.Kill(-r.proc.Process.Pid, syscall.SIGKILL)
+	select {
+	case <-procDone:
+	case <-time.After(abortTimeout):
+		slog.Warn("opencode serve did not exit after SIGKILL")
+	}
 }
 
 func (r *Runner) waitHealthy(ctx context.Context, procDone <-chan error) error {
@@ -331,10 +361,13 @@ func (r *Runner) waitHealthy(ctx context.Context, procDone <-chan error) error {
 			}
 			return fmt.Errorf("health check timed out: %w", ctx.Err())
 		case err := <-procDone:
+			var wrapped error
 			if lastErr != nil {
-				return fmt.Errorf("process exited before becoming healthy after last failure: %v: %w", lastErr, err)
+				wrapped = fmt.Errorf("process exited before becoming healthy after last failure: %v: %w", lastErr, err)
+			} else {
+				wrapped = fmt.Errorf("process exited before becoming healthy: %w", err)
 			}
-			return fmt.Errorf("process exited before becoming healthy: %w", err)
+			return &processExitedBeforeHealthyError{err: wrapped}
 		case <-ticker.C:
 		}
 	}

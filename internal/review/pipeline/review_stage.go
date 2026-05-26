@@ -3,7 +3,6 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 
@@ -43,14 +42,11 @@ func (s *ReviewStage) Run(ctx context.Context) ([]*models.ReviewResult, []runner
 	if len(s.messages) == 0 {
 		return nil, nil, fmt.Errorf("no review messages configured")
 	}
-	if err := s.runner.StartServe(ctx); err != nil {
-		return nil, nil, fmt.Errorf("start reviewer serve: %w", err)
-	}
-	defer s.runner.StopServe()
-	models, err := s.precheckModels(ctx)
+	models, err := startServeWithModelFallback(ctx, s.runner, "reviewer", "reviewer", s.models)
 	if err != nil {
 		return nil, nil, err
 	}
+	defer s.runner.StopServe()
 	results, stats := s.runAllReviews(ctx, models)
 	if failed := len(s.messages) - len(results); failed > 0 {
 		return nil, nil, fmt.Errorf("%d of %d review sessions failed; models exhausted: %v", failed, len(s.messages), models)
@@ -60,23 +56,6 @@ func (s *ReviewStage) Run(ctx context.Context) ([]*models.ReviewResult, []runner
 
 // MessageCount returns the number of configured review messages.
 func (s *ReviewStage) MessageCount() int { return len(s.messages) }
-
-// runAllReviews runs all reviewer sessions in parallel.
-func (s *ReviewStage) precheckModels(ctx context.Context) ([]string, error) {
-	var errs []error
-	for idx, model := range s.models {
-		if err := s.runner.Precheck(ctx, "reviewer", model); err != nil {
-			if isContextErr(err) {
-				return nil, fmt.Errorf("reviewer precheck model %q: %w", model, err)
-			}
-			slog.Warn("reviewer precheck failed", "model", model, "error", err)
-			errs = append(errs, fmt.Errorf("%s: %w", modelLabel(model), err))
-			continue
-		}
-		return s.models[idx:], nil
-	}
-	return nil, fmt.Errorf("reviewer precheck failed for all models %v: %w", s.models, errors.Join(errs...))
-}
 
 // runAllReviews runs all reviewer sessions in parallel.
 func (s *ReviewStage) runAllReviews(ctx context.Context, modelChain []string) ([]*models.ReviewResult, []runner.SessionStats) {
