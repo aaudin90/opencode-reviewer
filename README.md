@@ -130,7 +130,7 @@ File mapping:
 `submit_review.ts`, `submit_final_review.ts`, and `submit_comment_warrior_decision.ts` are built in. Add files under phase `tools` directories only when you need to override a built-in tool or add a custom OpenCode tool.
 
 When files exist in `.opencodereview`, they override the corresponding TOML prompt/provider paths. Scalar settings such as branch, GitLab URL, and timeouts can be set only with an explicit `--config` TOML file or env vars. Keep the model in `provider.json` unless you intentionally need an env or explicit TOML override.
-Model fallback chain priority is `OR_OPENCODE_FALLBACK_MODELS` > `opencode.fallback_models`; the primary model comes from `OR_OPENCODE_MODEL`, `opencode.model`, or `provider.json`.
+Model fallback chain priority is `OR_OPENCODE_FALLBACK_MODELS` > `opencode.fallback_models`; the primary model comes from `OR_OPENCODE_MODEL`, `opencode.model`, or `provider.json`. Fallback candidates are checked before review sessions start.
 
 ## Explicit TOML
 
