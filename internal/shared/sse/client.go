@@ -106,8 +106,7 @@ func parseStream(
 ) (json.RawMessage, error) {
 	knownSessions := map[string]bool{sessionID: true}
 
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 0, 1<<20), 1<<20) // 1 MB buffer for large findings
+	reader := bufio.NewReader(r)
 
 	var dataLines []string
 
@@ -115,54 +114,99 @@ func parseStream(
 	var eventCount int
 	lastHeartbeat := time.Now()
 
-	for scanner.Scan() {
-		line := scanner.Text()
+	for {
+		line, readErr := reader.ReadString('\n')
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			return nil, markRetryable(fmt.Errorf("sse stream read error: %w", readErr))
+		}
+		line = strings.TrimSuffix(line, "\n")
+		line = strings.TrimSuffix(line, "\r")
+
 		switch {
 		case strings.HasPrefix(line, "event:"):
 			// ignore event: lines — we check type field in JSON instead
 		case strings.HasPrefix(line, "data:"):
 			dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
 		case line == "":
-			if len(dataLines) > 0 {
-				raw := []byte(strings.Join(dataLines, ""))
-				if err := extractSessionCodeError(raw); err != nil {
-					return nil, err
-				}
-				var event toolCallEvent
-				if err := json.Unmarshal(raw, &event); err == nil {
-					if sid := event.Properties.Part.SessionID; sid != "" && !knownSessions[sid] {
-						if childSessions != nil {
-							if _, ok := childSessions.Load(sid); ok {
-								knownSessions[sid] = true
-								slog.Info("discovered child session in SSE stream",
-									"child_session_id", sid,
-									"parent_session_id", sessionID)
-							}
-						}
-					}
-					trySendToolCall(&event, knownSessions, events)
-					if err := extractToolError(&event, sessionID, toolName); err != nil {
-						return nil, err
-					}
-					if args, ok := extractToolArgs(&event, sessionID, toolName); ok {
-						return args, nil
-					}
-				}
+			args, handled, err := handleSSEEvent(dataLines, knownSessions, sessionID, toolName, childSessions, events)
+			if err != nil {
+				return nil, err
+			}
+			if args != nil {
+				return args, nil
+			}
+			if handled {
 				eventCount++
-				if time.Since(lastHeartbeat) >= 30*time.Second {
-					lastHeartbeat = time.Now()
-					slog.Info("sse heartbeat", "session", sessionID, "tool", toolName, "events_processed", eventCount, "elapsed", time.Since(startTime).String())
-				}
+				lastHeartbeat = maybeLogHeartbeat(lastHeartbeat, startTime, sessionID, toolName, eventCount)
 			}
 			dataLines = dataLines[:0]
 		}
-	}
 
-	if err := scanner.Err(); err != nil {
-		return nil, markRetryable(fmt.Errorf("sse stream read error: %w", err))
+		if errors.Is(readErr, io.EOF) {
+			args, handled, err := handleSSEEvent(dataLines, knownSessions, sessionID, toolName, childSessions, events)
+			if err != nil {
+				return nil, err
+			}
+			if args != nil {
+				return args, nil
+			}
+			if handled {
+				eventCount++
+				maybeLogHeartbeat(lastHeartbeat, startTime, sessionID, toolName, eventCount)
+			}
+			break
+		}
 	}
 
 	return nil, fmt.Errorf("sse stream ended without %q tool result for session %q", toolName, sessionID)
+}
+
+func handleSSEEvent(
+	dataLines []string,
+	knownSessions map[string]bool,
+	sessionID, toolName string,
+	childSessions *sync.Map,
+	events chan<- ToolCall,
+) (json.RawMessage, bool, error) {
+	if len(dataLines) == 0 {
+		return nil, false, nil
+	}
+
+	raw := []byte(strings.Join(dataLines, ""))
+	if err := extractSessionCodeError(raw); err != nil {
+		return nil, true, err
+	}
+	var event toolCallEvent
+	if err := json.Unmarshal(raw, &event); err != nil {
+		return nil, true, nil
+	}
+	if sid := event.Properties.Part.SessionID; sid != "" && !knownSessions[sid] {
+		if childSessions != nil {
+			if _, ok := childSessions.Load(sid); ok {
+				knownSessions[sid] = true
+				slog.Info("discovered child session in SSE stream",
+					"child_session_id", sid,
+					"parent_session_id", sessionID)
+			}
+		}
+	}
+	trySendToolCall(&event, knownSessions, events)
+	if err := extractToolError(&event, sessionID, toolName); err != nil {
+		return nil, true, err
+	}
+	if args, ok := extractToolArgs(&event, sessionID, toolName); ok {
+		return args, true, nil
+	}
+	return nil, true, nil
+}
+
+func maybeLogHeartbeat(lastHeartbeat, startTime time.Time, sessionID, toolName string, eventCount int) time.Time {
+	if time.Since(lastHeartbeat) < 30*time.Second {
+		return lastHeartbeat
+	}
+	lastHeartbeat = time.Now()
+	slog.Info("sse heartbeat", "session", sessionID, "tool", toolName, "events_processed", eventCount, "elapsed", time.Since(startTime).String())
+	return lastHeartbeat
 }
 
 // trySendToolCall sends a completed tool call event to the channel (non-blocking).
