@@ -78,6 +78,28 @@ func TestParseStream_LongDataLine(t *testing.T) {
 	}
 }
 
+func TestParseStream_DataExceedsLimit(t *testing.T) {
+	stream := "data: 12345678901\ndata: 1234567890\n\n"
+
+	_, err := parseStreamWithLimit(strings.NewReader(stream), "sess-1", "submit_review", nil, nil, 20)
+	if err == nil {
+		t.Fatal("expected limit error, got nil")
+	}
+	if IsRetryable(err) {
+		t.Fatalf("expected non-retryable limit error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "sse event exceeds 20 bytes limit") {
+		t.Fatalf("error = %v, want SSE limit error", err)
+	}
+}
+
+func TestSSEEventTooLargeErrorMessage(t *testing.T) {
+	err := (&sseEventTooLargeError{limitBytes: maxSSEEventBytes}).Error()
+	if err != "sse event exceeds 256 MiB limit" {
+		t.Fatalf("error = %q, want 256 MiB limit message", err)
+	}
+}
+
 func TestParseStream_EOFWithoutFinalBlankLine(t *testing.T) {
 	args := map[string]any{
 		"summary":  "Done",

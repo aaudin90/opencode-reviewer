@@ -2,6 +2,7 @@ package sse
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,16 @@ import (
 	"sync"
 	"time"
 )
+
+const maxSSEEventBytes = 256 << 20
+
+type sseEventTooLargeError struct {
+	limitBytes int
+}
+
+func (e *sseEventTooLargeError) Error() string {
+	return fmt.Sprintf("sse event exceeds %s limit", formatByteLimit(e.limitBytes))
+}
 
 // Client reads SSE events from an opencode serve endpoint.
 type Client struct {
@@ -104,31 +115,53 @@ func parseStream(
 	childSessions *sync.Map,
 	events chan<- ToolCall,
 ) (json.RawMessage, error) {
+	return parseStreamWithLimit(r, sessionID, toolName, childSessions, events, maxSSEEventBytes)
+}
+
+func parseStreamWithLimit(
+	r io.Reader,
+	sessionID, toolName string,
+	childSessions *sync.Map,
+	events chan<- ToolCall,
+	maxEventBytes int,
+) (json.RawMessage, error) {
 	knownSessions := map[string]bool{sessionID: true}
 
 	reader := bufio.NewReader(r)
 
-	var dataLines []string
+	var data bytes.Buffer
+	var hasData bool
 
 	startTime := time.Now()
 	var eventCount int
 	lastHeartbeat := time.Now()
 
 	for {
-		line, readErr := reader.ReadString('\n')
+		line, readErr := readSSELine(reader, maxEventBytes)
 		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			var tooLarge *sseEventTooLargeError
+			if errors.As(readErr, &tooLarge) {
+				return nil, readErr
+			}
 			return nil, markRetryable(fmt.Errorf("sse stream read error: %w", readErr))
 		}
-		line = strings.TrimSuffix(line, "\n")
-		line = strings.TrimSuffix(line, "\r")
+		line = bytes.TrimSuffix(line, []byte("\n"))
+		line = bytes.TrimSuffix(line, []byte("\r"))
 
 		switch {
-		case strings.HasPrefix(line, "event:"):
+		case bytes.HasPrefix(line, []byte("event:")):
 			// ignore event: lines — we check type field in JSON instead
-		case strings.HasPrefix(line, "data:"):
-			dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
-		case line == "":
-			args, handled, err := handleSSEEvent(dataLines, knownSessions, sessionID, toolName, childSessions, events)
+		case bytes.HasPrefix(line, []byte("data:")):
+			dataLine := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
+			if data.Len()+len(dataLine) > maxEventBytes {
+				return nil, &sseEventTooLargeError{limitBytes: maxEventBytes}
+			}
+			if _, err := data.Write(dataLine); err != nil {
+				return nil, err
+			}
+			hasData = true
+		case len(line) == 0:
+			args, handled, err := handleSSEEvent(hasData, data.Bytes(), knownSessions, sessionID, toolName, childSessions, events)
 			if err != nil {
 				return nil, err
 			}
@@ -139,11 +172,12 @@ func parseStream(
 				eventCount++
 				lastHeartbeat = maybeLogHeartbeat(lastHeartbeat, startTime, sessionID, toolName, eventCount)
 			}
-			dataLines = dataLines[:0]
+			data.Reset()
+			hasData = false
 		}
 
 		if errors.Is(readErr, io.EOF) {
-			args, handled, err := handleSSEEvent(dataLines, knownSessions, sessionID, toolName, childSessions, events)
+			args, handled, err := handleSSEEvent(hasData, data.Bytes(), knownSessions, sessionID, toolName, childSessions, events)
 			if err != nil {
 				return nil, err
 			}
@@ -161,18 +195,42 @@ func parseStream(
 	return nil, fmt.Errorf("sse stream ended without %q tool result for session %q", toolName, sessionID)
 }
 
+func readSSELine(reader *bufio.Reader, maxBytes int) ([]byte, error) {
+	var line bytes.Buffer
+	for {
+		fragment, err := reader.ReadSlice('\n')
+		if line.Len()+len(fragment) > maxBytes {
+			return nil, &sseEventTooLargeError{limitBytes: maxBytes}
+		}
+		if _, writeErr := line.Write(fragment); writeErr != nil {
+			return nil, writeErr
+		}
+		if errors.Is(err, bufio.ErrBufferFull) {
+			continue
+		}
+		return line.Bytes(), err
+	}
+}
+
+func formatByteLimit(limitBytes int) string {
+	if limitBytes%(1<<20) == 0 {
+		return fmt.Sprintf("%d MiB", limitBytes>>20)
+	}
+	return fmt.Sprintf("%d bytes", limitBytes)
+}
+
 func handleSSEEvent(
-	dataLines []string,
+	hasData bool,
+	raw []byte,
 	knownSessions map[string]bool,
 	sessionID, toolName string,
 	childSessions *sync.Map,
 	events chan<- ToolCall,
 ) (json.RawMessage, bool, error) {
-	if len(dataLines) == 0 {
+	if !hasData {
 		return nil, false, nil
 	}
 
-	raw := []byte(strings.Join(dataLines, ""))
 	if err := extractSessionCodeError(raw); err != nil {
 		return nil, true, err
 	}
