@@ -18,6 +18,7 @@
 #   OR_OPENCODE_FALLBACK_MODELS  Comma-separated fallback models in provider/model format
 #   OR_OPENCODE_BINARY           Path to opencode binary
 #   OR_OPENCODE_STAGE_TIMEOUT    Timeout per stage in seconds
+#   OR_OPENCODE_PRECHECK_TIMEOUT Timeout for startup precheck in seconds
 #   OR_OPENCODE_MAX_STEPS        Max agent steps per session
 #   OR_OPENCODE_MIN_VERSION      Minimum opencode version
 #   OR_OPENCODE_PRINT_LOGS       Pass --print-logs to opencode serve
@@ -83,6 +84,10 @@ project_dir = "/path/to/your/project"
   # stage_timeout: maximum seconds for a single review stage.
   # Default: 600.
   stage_timeout = 600
+
+  # precheck_timeout: maximum seconds for the startup OpenCode health precheck.
+  # Default: 300.
+  precheck_timeout = 300
 
   # max_steps: maximum agent steps per review session.
   # Default: 50.

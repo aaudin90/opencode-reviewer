@@ -54,6 +54,7 @@ Config file (TOML) sections:
     fallback_models         Optional fallback model chain after the primary provider/model
     binary                  Path to opencode binary (default: opencode)
     stage_timeout           Timeout per stage in seconds (default: 600)
+    precheck_timeout        Timeout for startup precheck in seconds (default: 300)
     max_steps               Max agent steps per session (default: 50)
     min_version             Minimum required opencode version (semver)
     print_logs              Pass --print-logs to opencode serve
@@ -99,6 +100,7 @@ Environment variables:
   OR_OPENCODE_FALLBACK_MODELS  Comma-separated fallback models in provider/model format
   OR_OPENCODE_BINARY           Path to opencode binary (overrides opencode.binary)
   OR_OPENCODE_STAGE_TIMEOUT    Timeout per stage in seconds (overrides opencode.stage_timeout)
+  OR_OPENCODE_PRECHECK_TIMEOUT Timeout for startup precheck in seconds (overrides opencode.precheck_timeout)
   OR_OPENCODE_MAX_STEPS        Max agent steps per session (overrides opencode.max_steps)
   OR_OPENCODE_MIN_VERSION      Minimum opencode version (overrides opencode.min_version)
   OR_OPENCODE_PRINT_LOGS       Pass --print-logs to opencode serve (true/1)

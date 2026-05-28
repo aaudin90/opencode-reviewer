@@ -53,6 +53,10 @@ func applyDefaults(cfg *Config) {
 		cfg.OpenCode.StageTimeout = 600
 	}
 
+	if cfg.OpenCode.PrecheckTimeout == 0 {
+		cfg.OpenCode.PrecheckTimeout = 300
+	}
+
 	if cfg.Git.Remote == "" {
 		cfg.Git.Remote = "origin"
 	}
@@ -79,6 +83,7 @@ func applyDefaults(cfg *Config) {
 //	OR_OPENCODE_FALLBACK_MODELS  → opencode.fallback_models
 //	OR_OPENCODE_BINARY           → opencode.binary
 //	OR_OPENCODE_STAGE_TIMEOUT    → opencode.stage_timeout
+//	OR_OPENCODE_PRECHECK_TIMEOUT → opencode.precheck_timeout
 //	OR_OPENCODE_MAX_STEPS        → opencode.max_steps
 //	OR_OPENCODE_MIN_VERSION      → opencode.min_version
 //	OR_OPENCODE_PRINT_LOGS       → opencode.print_logs
@@ -121,6 +126,12 @@ func ApplyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("OR_OPENCODE_STAGE_TIMEOUT"); v != "" {
 		if t, err := strconv.Atoi(v); err == nil {
 			cfg.OpenCode.StageTimeout = t
+		}
+	}
+
+	if v := os.Getenv("OR_OPENCODE_PRECHECK_TIMEOUT"); v != "" {
+		if t, err := strconv.Atoi(v); err == nil {
+			cfg.OpenCode.PrecheckTimeout = t
 		}
 	}
 

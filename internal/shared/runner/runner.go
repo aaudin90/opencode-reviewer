@@ -37,8 +37,8 @@ const (
 	// This timeout only covers potential network delay in SSE delivery.
 	// If it expires, the attempt is treated as a miss and triggers a retry.
 	toolCallWaitTimeout = 3 * time.Second
-	precheckTimeout     = 3 * time.Minute
 	precheckPrompt      = "Health check. Reply with exactly: OK\nDo not use tools. Do not add explanations or markdown."
+	defaultPrecheckSec  = 300
 )
 
 // Runner manages an opencode serve subprocess and HTTP interaction.
@@ -278,7 +278,7 @@ func (r *Runner) run(ctx context.Context, req RunRequest, out chan<- RunEvent) {
 func (r *Runner) Precheck(ctx context.Context, agentName, model string) error {
 	slog.Info("running precheck", "agent", sanitizeLogValue(agentName, 128))
 
-	ctx, cancel := context.WithTimeout(ctx, precheckTimeout)
+	ctx, cancel := context.WithTimeout(ctx, r.precheckTimeout())
 	defer cancel()
 
 	sessionID, err := r.createSession(ctx)
@@ -305,6 +305,14 @@ func (r *Runner) Precheck(ctx context.Context, agentName, model string) error {
 		return nil
 	}
 	return fmt.Errorf("empty response")
+}
+
+func (r *Runner) precheckTimeout() time.Duration {
+	timeoutSec := r.cfg.PrecheckTimeout
+	if timeoutSec == 0 {
+		timeoutSec = defaultPrecheckSec
+	}
+	return time.Duration(timeoutSec) * time.Second
 }
 
 // StopServe gracefully stops the opencode serve subprocess.

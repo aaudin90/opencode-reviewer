@@ -386,6 +386,39 @@ func TestPrecheckSendsDeterministicPrompt(t *testing.T) {
 	}
 }
 
+func TestPrecheckUsesConfiguredTimeout(t *testing.T) {
+	releaseMessage := make(chan struct{})
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /session", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(sessionResponse{ID: "sess-precheck"})
+	})
+	mux.HandleFunc("POST /session/{id}/message", func(_ http.ResponseWriter, req *http.Request) {
+		select {
+		case <-releaseMessage:
+		case <-req.Context().Done():
+		}
+	})
+	mux.HandleFunc("DELETE /session/{id}", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	r := newTestRunner(config.OpenCodeConfig{Endpoint: srv.URL, PrecheckTimeout: 1})
+	start := time.Now()
+	err := r.Precheck(context.Background(), "reviewer", "")
+	close(releaseMessage)
+	if err == nil {
+		t.Fatal("Precheck error = nil, want timeout error")
+	}
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("Precheck took %s, want configured timeout around 1s", elapsed)
+	}
+}
+
 // makeToolCallSSE produces a valid SSE payload for a submit_review tool result
 // in the real opencode format.
 func makeToolCallSSE(sessionID string, args any) string {

@@ -16,6 +16,27 @@ func TestLoad_DefaultOpenCodeLogDir(t *testing.T) {
 	}
 }
 
+func TestLoad_DefaultOpenCodePrecheckTimeout(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+	if cfg.OpenCode.PrecheckTimeout != 300 {
+		t.Fatalf("PrecheckTimeout = %d, want 300", cfg.OpenCode.PrecheckTimeout)
+	}
+}
+
+func TestApplyEnvOverrides_OpenCodePrecheckTimeout(t *testing.T) {
+	t.Setenv("OR_OPENCODE_PRECHECK_TIMEOUT", "42")
+
+	cfg := &Config{}
+	ApplyEnvOverrides(cfg)
+
+	if cfg.OpenCode.PrecheckTimeout != 42 {
+		t.Fatalf("PrecheckTimeout = %d, want 42", cfg.OpenCode.PrecheckTimeout)
+	}
+}
+
 func TestApplyEnvOverrides_OpenCodeLogs(t *testing.T) {
 	t.Setenv("OR_OPENCODE_PRINT_LOGS", "true")
 	t.Setenv("OR_OPENCODE_LOG_LEVEL", "DEBUG")
