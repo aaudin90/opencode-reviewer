@@ -16,7 +16,8 @@ FROM almalinux:9-minimal
 RUN microdnf install -y git ca-certificates tar net-tools && microdnf clean all
 
 ARG TARGETARCH
-ARG OPENCODE_VERSION=1.15.4
+ARG OPENCODE_VERSION=1.15.11
+ARG OPENCODE_WARMUP_MODEL
 RUN case "${TARGETARCH}" in \
     amd64) ARCH=x64 ;; \
     arm64) ARCH=arm64 ;; \
@@ -31,12 +32,16 @@ ENV OPENCODE_DISABLE_AUTOUPDATE=true \
     OPENCODE_DISABLE_DEFAULT_PLUGINS=true \
     OPENCODE_DISABLE_LSP_DOWNLOAD=true
 
-COPY images/opencode-warmup.deepseek.json /tmp/opencode-warmup.deepseek.json
-COPY internal/review/runtime/tools/submit_review.ts /tmp/opencode-warmup-submit_review.ts
-
-RUN --mount=type=secret,id=deepseek_api_key,required=false set -eux; \
+RUN --mount=type=secret,id=deepseek_api_key,required=false \
+  --mount=type=secret,id=opencode_warmup_config,required=false \
+  --mount=type=bind,source=images/opencode-warmup.deepseek.json,target=/tmp/opencode-warmup.deepseek.json,readonly \
+  --mount=type=bind,source=internal/review/runtime/tools/submit_review.ts,target=/tmp/opencode-warmup-submit_review.ts,readonly set -eux; \
   mkdir -p /root/.config/opencode/tools /root/.bun/install/cache; \
-  cp /tmp/opencode-warmup.deepseek.json /root/.config/opencode/opencode.json; \
+  if [ -f /run/secrets/opencode_warmup_config ]; then \
+    cp /run/secrets/opencode_warmup_config /root/.config/opencode/opencode.json; \
+  else \
+    cp /tmp/opencode-warmup.deepseek.json /root/.config/opencode/opencode.json; \
+  fi; \
   cp /tmp/opencode-warmup-submit_review.ts /root/.config/opencode/tools/submit_review.ts; \
   printf 'OPENCODE_DISABLE_AUTOUPDATE\n' >/tmp/opencode-warmup-grep.txt; \
   if [ -f /run/secrets/deepseek_api_key ]; then \
@@ -48,9 +53,13 @@ RUN --mount=type=secret,id=deepseek_api_key,required=false set -eux; \
   export BUN_INSTALL_CACHE_DIR=/root/.bun/install/cache; \
   unset OPENCODE_DISABLE_MODELS_FETCH OPENCODE_DISABLE_DEFAULT_PLUGINS; \
   opencode --version; \
+  WARMUP_MODEL_ARGS=; \
+  if [ -n "${OPENCODE_WARMUP_MODEL}" ]; then \
+    WARMUP_MODEL_ARGS="--model ${OPENCODE_WARMUP_MODEL}"; \
+  fi; \
   WARMUP_STATUS=0; \
   timeout 180s opencode run \
-    --model deepseek/deepseek-v4-flash \
+    ${WARMUP_MODEL_ARGS} \
     --format json \
     --dangerously-skip-permissions \
     "Используй инструмент grep и найди в /tmp/opencode-warmup-grep.txt упоминания OPENCODE_DISABLE_AUTOUPDATE. Ответь кратко: какие файлы найдены." \
@@ -65,8 +74,6 @@ RUN --mount=type=secret,id=deepseek_api_key,required=false set -eux; \
   rm -rf \
     /root/.config/opencode/opencode.json \
     /root/.config/opencode/tools \
-    /tmp/opencode-warmup.deepseek.json \
-    /tmp/opencode-warmup-submit_review.ts \
     /tmp/opencode-warmup-grep.txt \
     /root/.local/share/opencode \
     /root/.local/state/opencode \
