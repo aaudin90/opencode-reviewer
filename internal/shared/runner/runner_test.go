@@ -188,6 +188,34 @@ func TestStartServeWritesProcessOutputToLogFile(t *testing.T) {
 	}
 }
 
+func TestStartServeUsesIPv4LoopbackBaseURL(t *testing.T) {
+	if os.Getenv("OR_TEST_HELPER_OPENCODE_SERVE") == "1" {
+		helperOpenCodeServe()
+		return
+	}
+
+	dir := t.TempDir()
+	script := filepath.Join(dir, "fake-opencode")
+	body := fmt.Sprintf("#!/bin/sh\nexec %q -test.run=TestStartServeUsesIPv4LoopbackBaseURL -- \"$@\"\n", os.Args[0])
+	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OR_TEST_HELPER_OPENCODE_SERVE", "1")
+
+	r := New(config.OpenCodeConfig{Binary: script}, dir, nil, "reviewer")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := r.StartServe(ctx); err != nil {
+		t.Fatalf("StartServe: %v", err)
+	}
+	defer r.StopServe()
+
+	if !strings.HasPrefix(r.baseURL, "http://127.0.0.1:") {
+		t.Fatalf("baseURL = %q, want IPv4 loopback", r.baseURL)
+	}
+}
+
 func TestStartServeSetsXDGDirs(t *testing.T) {
 	if os.Getenv("OR_TEST_HELPER_OPENCODE_SERVE") == "1" {
 		helperOpenCodeServe()

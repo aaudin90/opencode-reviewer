@@ -104,7 +104,7 @@ func (r *Runner) StartServe(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("allocate port: %w", err)
 	}
-	r.baseURL = fmt.Sprintf("http://localhost:%d", port)
+	r.baseURL = fmt.Sprintf("http://127.0.0.1:%d", port)
 
 	cmd := exec.CommandContext(ctx, r.cfg.Binary, r.serveArgs(port)...) // #nosec G204 -- binary from trusted config
 	cmd.Dir = r.workDir

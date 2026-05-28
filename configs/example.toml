@@ -62,7 +62,7 @@ project_dir = "/path/to/your/project"
 [opencode]
   # endpoint: URL of a running opencode serve instance.
   # If set, the reviewer connects to it instead of starting a subprocess.
-  # endpoint = "http://localhost:4096"
+  # endpoint = "http://127.0.0.1:4096"
 
   # port: port for the opencode subprocess (used when endpoint is empty).
   # Default: 4096.
