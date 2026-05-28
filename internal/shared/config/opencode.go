@@ -12,6 +12,7 @@ type OpenCodeConfig struct {
 	FallbackModels     []string `toml:"fallback_models"`
 	Binary             string   `toml:"binary"`
 	StageTimeout       int      `toml:"stage_timeout"`
+	PrecheckTimeout    int      `toml:"precheck_timeout"`
 	MaxSteps           int      `toml:"max_steps"`
 	ProviderConfigPath string   `toml:"provider_config_path"`
 	MinVersion         string   `toml:"min_version"`

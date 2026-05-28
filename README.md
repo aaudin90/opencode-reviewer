@@ -146,6 +146,7 @@ project_dir = "/path/to/project"
   # Prefer setting model in provider.json.
   # model = "llm-proxy/kimi-k2.5"
   # fallback_models = ["openai/gpt-5", "anthropic/claude-sonnet-4-5"]
+  precheck_timeout = 300
   max_steps = 50
   print_logs = false
   # log_level = "DEBUG"
@@ -199,6 +200,7 @@ Common env vars:
 | `OR_BRANCH` | Branch to review |
 | `OR_OPENCODE_MODEL` | LLM model identifier in `provider/model` format |
 | `OR_OPENCODE_FALLBACK_MODELS` | Comma-separated fallback models in `provider/model` format |
+| `OR_OPENCODE_PRECHECK_TIMEOUT` | Timeout for startup precheck in seconds |
 | `OR_OPENCODE_PRINT_LOGS` | Pass `--print-logs` to `opencode serve` with `true` or `1` |
 | `OR_OPENCODE_LOG_LEVEL` | Pass `--log-level` to `opencode serve`: `DEBUG`, `INFO`, `WARN`, or `ERROR` |
 | `OR_OPENCODE_LOG_DIR` | OpenCode log directory; relative paths are resolved under `project_dir` |

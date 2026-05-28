@@ -188,6 +188,34 @@ func TestStartServeWritesProcessOutputToLogFile(t *testing.T) {
 	}
 }
 
+func TestStartServeUsesIPv4LoopbackBaseURL(t *testing.T) {
+	if os.Getenv("OR_TEST_HELPER_OPENCODE_SERVE") == "1" {
+		helperOpenCodeServe()
+		return
+	}
+
+	dir := t.TempDir()
+	script := filepath.Join(dir, "fake-opencode")
+	body := fmt.Sprintf("#!/bin/sh\nexec %q -test.run=TestStartServeUsesIPv4LoopbackBaseURL -- \"$@\"\n", os.Args[0])
+	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OR_TEST_HELPER_OPENCODE_SERVE", "1")
+
+	r := New(config.OpenCodeConfig{Binary: script}, dir, nil, "reviewer")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := r.StartServe(ctx); err != nil {
+		t.Fatalf("StartServe: %v", err)
+	}
+	defer r.StopServe()
+
+	if !strings.HasPrefix(r.baseURL, "http://127.0.0.1:") {
+		t.Fatalf("baseURL = %q, want IPv4 loopback", r.baseURL)
+	}
+}
+
 func TestStartServeSetsXDGDirs(t *testing.T) {
 	if os.Getenv("OR_TEST_HELPER_OPENCODE_SERVE") == "1" {
 		helperOpenCodeServe()
@@ -383,6 +411,39 @@ func TestPrecheckSendsDeterministicPrompt(t *testing.T) {
 	}
 	if gotModel.ProviderID != "override" || gotModel.ModelID != "model" {
 		t.Errorf("model = %+v, want override/model", gotModel)
+	}
+}
+
+func TestPrecheckUsesConfiguredTimeout(t *testing.T) {
+	releaseMessage := make(chan struct{})
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /session", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(sessionResponse{ID: "sess-precheck"})
+	})
+	mux.HandleFunc("POST /session/{id}/message", func(_ http.ResponseWriter, req *http.Request) {
+		select {
+		case <-releaseMessage:
+		case <-req.Context().Done():
+		}
+	})
+	mux.HandleFunc("DELETE /session/{id}", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	r := newTestRunner(config.OpenCodeConfig{Endpoint: srv.URL, PrecheckTimeout: 1})
+	start := time.Now()
+	err := r.Precheck(context.Background(), "reviewer", "")
+	close(releaseMessage)
+	if err == nil {
+		t.Fatal("Precheck error = nil, want timeout error")
+	}
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("Precheck took %s, want configured timeout around 1s", elapsed)
 	}
 }
 

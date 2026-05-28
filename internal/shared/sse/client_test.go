@@ -55,6 +55,73 @@ func TestParseStream_MatchingEvent(t *testing.T) {
 	}
 }
 
+func TestParseStream_LongDataLine(t *testing.T) {
+	longSummary := strings.Repeat("x", 1<<20+1)
+	args := map[string]any{
+		"summary":  longSummary,
+		"verdict":  "approve",
+		"findings": []any{},
+	}
+	stream := makeToolCallEvent("sess-1", "submit_review", "completed", args)
+
+	result, err := parseStream(strings.NewReader(stream), "sess-1", "submit_review", nil, nil)
+	if err != nil {
+		t.Fatalf("parseStream: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	if parsed["summary"] != longSummary {
+		t.Fatalf("summary length = %d, want %d", len(parsed["summary"].(string)), len(longSummary))
+	}
+}
+
+func TestParseStream_DataExceedsLimit(t *testing.T) {
+	stream := "data: 12345678901\ndata: 1234567890\n\n"
+
+	_, err := parseStreamWithLimit(strings.NewReader(stream), "sess-1", "submit_review", nil, nil, 20)
+	if err == nil {
+		t.Fatal("expected limit error, got nil")
+	}
+	if IsRetryable(err) {
+		t.Fatalf("expected non-retryable limit error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "sse event exceeds 20 bytes limit") {
+		t.Fatalf("error = %v, want SSE limit error", err)
+	}
+}
+
+func TestSSEEventTooLargeErrorMessage(t *testing.T) {
+	err := (&sseEventTooLargeError{limitBytes: maxSSEEventBytes}).Error()
+	if err != "sse event exceeds 256 MiB limit" {
+		t.Fatalf("error = %q, want 256 MiB limit message", err)
+	}
+}
+
+func TestParseStream_EOFWithoutFinalBlankLine(t *testing.T) {
+	args := map[string]any{
+		"summary":  "Done",
+		"verdict":  "approve",
+		"findings": []any{},
+	}
+	stream := strings.TrimSuffix(makeToolCallEvent("sess-1", "submit_review", "completed", args), "\n\n")
+
+	result, err := parseStream(strings.NewReader(stream), "sess-1", "submit_review", nil, nil)
+	if err != nil {
+		t.Fatalf("parseStream: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	if parsed["verdict"] != "approve" {
+		t.Errorf("verdict = %v, want approve", parsed["verdict"])
+	}
+}
+
 func TestParseStream_WrongSession(t *testing.T) {
 	stream := makeToolCallEvent("other-session", "submit_review", "completed", map[string]any{"verdict": "approve"})
 	_, err := parseStream(strings.NewReader(stream), "sess-1", "submit_review", nil, nil)

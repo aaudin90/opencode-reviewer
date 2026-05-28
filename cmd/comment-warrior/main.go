@@ -60,6 +60,7 @@ Environment variables:
   OR_COMMENT_WARRIOR_AGENT_PROMPT_PATH  Deprecated fallback when config-dir is inactive
   OR_COMMENT_WARRIOR_FINDING_MESSAGE_PATH  Deprecated fallback finding message path
   OR_COMMENT_WARRIOR_MENTION_MESSAGE_PATH  Deprecated fallback mention message path
+  OR_OPENCODE_PRECHECK_TIMEOUT             Timeout for startup precheck in seconds (default: 300)
   OR_OPENCODE_PRINT_LOGS                Pass --print-logs to opencode serve (true/1)
   OR_OPENCODE_LOG_LEVEL                 Pass --log-level to opencode serve (DEBUG, INFO, WARN, ERROR)
   OR_OPENCODE_LOG_DIR                   OpenCode log directory (default: opencode-review-logs)
