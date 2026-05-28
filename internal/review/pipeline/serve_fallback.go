@@ -24,8 +24,11 @@ func startServeWithModelFallback(ctx context.Context, r *runner.Runner, stageNam
 func precheckModelChain(ctx context.Context, r *runner.Runner, stageName, agentName string, models []string) ([]string, error) {
 	var errs []error
 	for idx, model := range models {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("%s precheck model %q: %w", stageName, model, err)
+		}
 		if err := r.Precheck(ctx, agentName, model); err != nil {
-			if isContextErr(err) {
+			if ctxErr := ctx.Err(); ctxErr != nil {
 				return nil, fmt.Errorf("%s precheck model %q: %w", stageName, model, err)
 			}
 			slog.Warn("precheck failed, trying next model", "stage", stageName, "model", model, "error", err)

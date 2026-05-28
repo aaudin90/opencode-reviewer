@@ -29,6 +29,7 @@ type modelFallbackServer struct {
 	runSessions  []string
 
 	messageStatus func(model string, precheck bool) int
+	messageDelay  func(model string, precheck bool) time.Duration
 	toolName      string
 	toolArgs      any
 }
@@ -78,6 +79,17 @@ func newModelFallbackServer(t *testing.T, toolName string, toolArgs any, message
 			s.runSessions = append(s.runSessions, r.PathValue("id"))
 		}
 		s.mu.Unlock()
+
+		if s.messageDelay != nil {
+			delay := s.messageDelay(model, precheck)
+			if delay > 0 {
+				select {
+				case <-time.After(delay):
+				case <-r.Context().Done():
+					return
+				}
+			}
+		}
 
 		status := s.messageStatus(model, precheck)
 		if status != http.StatusOK {
@@ -144,6 +156,15 @@ func (s *modelFallbackServer) runner() *runner.Runner {
 	}, "/tmp", nil, "test")
 }
 
+func (s *modelFallbackServer) runnerWithPrecheckTimeout(timeoutSec int) *runner.Runner {
+	return runner.New(config.OpenCodeConfig{
+		Endpoint:        s.server.URL,
+		Model:           "p/primary",
+		StageTimeout:    10,
+		PrecheckTimeout: timeoutSec,
+	}, "/tmp", nil, "test")
+}
+
 func (s *modelFallbackServer) seen() ([]string, []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -185,6 +206,71 @@ func TestReviewStage_FallbackPrecheckPrimaryFails(t *testing.T) {
 	prechecks, runs := srv.seen()
 	assertStrings(t, prechecks, []string{"p/primary", "p/fallback"})
 	assertStrings(t, runs, []string{"p/fallback"})
+}
+
+func TestReviewStage_FallbackPrecheckPrimaryTimeoutTriesNextModel(t *testing.T) {
+	toolArgs := map[string]any{"reviewer_name": "r", "summary": "ok", "verdict": "approve", "findings": []any{}}
+	srv := newModelFallbackServer(t, "submit_review", toolArgs, func(model string, precheck bool) int {
+		if !precheck && model != "p/fallback" {
+			return http.StatusBadRequest
+		}
+		return http.StatusOK
+	})
+	srv.messageDelay = func(model string, precheck bool) time.Duration {
+		if precheck && model == "p/primary" {
+			return 1100 * time.Millisecond
+		}
+		return 0
+	}
+
+	stage := NewReviewStage(ReviewStageConfig{
+		Runner:     srv.runnerWithPrecheckTimeout(1),
+		Messages:   []string{"review"},
+		ModelChain: []string{"p/primary", "p/fallback"},
+	})
+	results, stats, err := stage.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want 1", len(results))
+	}
+	assertStrings(t, stats[0].Models, []string{"p/fallback"})
+	assertStrings(t, stats[0].FallbackModels, []string{"p/fallback"})
+	prechecks, runs := srv.seen()
+	assertStrings(t, prechecks, []string{"p/primary", "p/fallback"})
+	assertStrings(t, runs, []string{"p/fallback"})
+}
+
+func TestReviewStage_FallbackPrecheckExternalContextTimeoutStopsChain(t *testing.T) {
+	toolArgs := map[string]any{"reviewer_name": "r", "summary": "ok", "verdict": "approve", "findings": []any{}}
+	srv := newModelFallbackServer(t, "submit_review", toolArgs, func(_ string, _ bool) int {
+		return http.StatusOK
+	})
+	srv.messageDelay = func(model string, precheck bool) time.Duration {
+		if precheck && model == "p/primary" {
+			return 200 * time.Millisecond
+		}
+		return 0
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	stage := NewReviewStage(ReviewStageConfig{
+		Runner:     srv.runnerWithPrecheckTimeout(10),
+		Messages:   []string{"review"},
+		ModelChain: []string{"p/primary", "p/fallback"},
+	})
+	_, _, err := stage.Run(ctx)
+	if err == nil {
+		t.Fatal("Run error = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "reviewer precheck model \"p/primary\"") || !strings.Contains(err.Error(), context.DeadlineExceeded.Error()) {
+		t.Fatalf("error = %v, want hard context deadline error", err)
+	}
+	prechecks, runs := srv.seen()
+	assertStrings(t, prechecks, []string{"p/primary"})
+	assertStrings(t, runs, nil)
 }
 
 func TestReviewStage_FallbackReviewerFailureRetriesNextModel(t *testing.T) {
