@@ -54,7 +54,7 @@ RUN --mount=type=secret,id=deepseek_api_key,required=false \
   unset OPENCODE_DISABLE_MODELS_FETCH OPENCODE_DISABLE_DEFAULT_PLUGINS; \
   opencode --version; \
   WARMUP_MODEL_ARGS=; \
-  if [ -n "${OPENCODE_WARMUP_MODEL}" ]; then \
+  if [ -n "${OPENCODE_WARMUP_MODEL:-}" ]; then \
     WARMUP_MODEL_ARGS="--model ${OPENCODE_WARMUP_MODEL}"; \
   fi; \
   WARMUP_STATUS=0; \
