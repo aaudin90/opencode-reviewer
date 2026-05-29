@@ -8,9 +8,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -302,6 +304,107 @@ func TestStartServeIgnoresStaleProcDone(t *testing.T) {
 	r.StopServe()
 }
 
+func TestStartServeRetriesSubprocessHealthFailure(t *testing.T) {
+	if os.Getenv("OR_TEST_HELPER_OPENCODE_RETRY") == "1" {
+		helperOpenCodeServeWithRetryBehavior()
+		return
+	}
+
+	restoreServeStartupTestTimings(t)
+
+	dir := t.TempDir()
+	script := filepath.Join(dir, "fake-opencode")
+	body := fmt.Sprintf("#!/bin/sh\nOR_TEST_HELPER_OPENCODE_RETRY=1 exec %q -test.run=TestStartServeRetriesSubprocessHealthFailure -- \"$@\"\n", os.Args[0])
+	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	attemptPath := filepath.Join(dir, "attempts")
+	t.Setenv("OR_TEST_HELPER_ATTEMPT_PATH", attemptPath)
+	t.Setenv("OR_TEST_HELPER_FAIL_ATTEMPTS", "1")
+
+	r := New(config.OpenCodeConfig{Binary: script}, dir, nil, "reviewer")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := r.StartServe(ctx); err != nil {
+		t.Fatalf("StartServe: %v", err)
+	}
+	defer r.StopServe()
+
+	if got := readHelperAttemptCount(t, attemptPath); got != 2 {
+		t.Fatalf("attempts = %d, want 2", got)
+	}
+}
+
+func TestStartServeReportsExhaustedHealthRetries(t *testing.T) {
+	if os.Getenv("OR_TEST_HELPER_OPENCODE_RETRY") == "1" {
+		helperOpenCodeServeWithRetryBehavior()
+		return
+	}
+
+	restoreServeStartupTestTimings(t)
+
+	dir := t.TempDir()
+	script := filepath.Join(dir, "fake-opencode")
+	body := fmt.Sprintf("#!/bin/sh\nOR_TEST_HELPER_OPENCODE_RETRY=1 exec %q -test.run=TestStartServeReportsExhaustedHealthRetries -- \"$@\"\n", os.Args[0])
+	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	attemptPath := filepath.Join(dir, "attempts")
+	pidPath := filepath.Join(dir, "pids")
+	t.Setenv("OR_TEST_HELPER_ATTEMPT_PATH", attemptPath)
+	t.Setenv("OR_TEST_HELPER_FAIL_ATTEMPTS", strconv.Itoa(serveStartAttempts))
+	t.Setenv("OR_TEST_HELPER_PID_PATH", pidPath)
+
+	r := New(config.OpenCodeConfig{Binary: script}, dir, nil, "reviewer")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err := r.StartServe(ctx)
+	if err == nil {
+		t.Fatal("StartServe should fail")
+	}
+	if !strings.Contains(err.Error(), "after 3 attempts") {
+		t.Fatalf("error = %v, want exhausted attempts", err)
+	}
+	if !strings.Contains(err.Error(), "health returned 503 Service Unavailable: warming up") {
+		t.Fatalf("error = %v, want last health error", err)
+	}
+	if got := readHelperAttemptCount(t, attemptPath); got != serveStartAttempts {
+		t.Fatalf("attempts = %d, want %d", got, serveStartAttempts)
+	}
+	assertHelperPIDsExited(t, pidPath)
+}
+
+func TestStartServeExternalEndpointDoesNotRetryServeStart(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/global/health" {
+			http.NotFound(w, req)
+			return
+		}
+		calls.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte("warming up"))
+	}))
+	defer srv.Close()
+
+	r := New(config.OpenCodeConfig{Endpoint: srv.URL}, t.TempDir(), nil, "reviewer")
+	ctx, cancel := context.WithTimeout(context.Background(), 1100*time.Millisecond)
+	defer cancel()
+
+	err := r.StartServe(ctx)
+	if err == nil {
+		t.Fatal("StartServe should fail")
+	}
+	if strings.Contains(err.Error(), "after 3 attempts") {
+		t.Fatalf("error = %v, want no subprocess retry wrapper", err)
+	}
+	if got := calls.Load(); got == 0 {
+		t.Fatal("external endpoint health was not checked")
+	}
+}
+
 func helperOpenCodeServe() {
 	args := os.Args
 	port := ""
@@ -325,6 +428,97 @@ func helperOpenCodeServe() {
 	})
 	if err := http.ListenAndServe("127.0.0.1:"+port, mux); err != nil {
 		os.Exit(1)
+	}
+}
+
+func helperOpenCodeServeWithRetryBehavior() {
+	args := os.Args
+	port := ""
+	for i, arg := range args {
+		if arg == "--port" && i+1 < len(args) {
+			port = args[i+1]
+			break
+		}
+	}
+	if port == "" {
+		os.Exit(2)
+	}
+
+	attemptPath := os.Getenv("OR_TEST_HELPER_ATTEMPT_PATH")
+	attempt := incrementHelperAttempt(attemptPath)
+	if pidPath := os.Getenv("OR_TEST_HELPER_PID_PATH"); pidPath != "" {
+		f, err := os.OpenFile(filepath.Clean(pidPath), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		if err == nil {
+			_, _ = fmt.Fprintf(f, "%d\n", os.Getpid())
+			_ = f.Close()
+		}
+	}
+
+	failAttempts, _ := strconv.Atoi(os.Getenv("OR_TEST_HELPER_FAIL_ATTEMPTS"))
+	mux := http.NewServeMux()
+	mux.HandleFunc("/global/health", func(w http.ResponseWriter, _ *http.Request) {
+		if attempt <= failAttempts {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte("warming up"))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	if err := http.ListenAndServe("127.0.0.1:"+port, mux); err != nil {
+		os.Exit(1)
+	}
+}
+
+func restoreServeStartupTestTimings(t *testing.T) {
+	t.Helper()
+	oldTimeout := serveStartupHealthTimeout
+	oldDelay := serveStartRetryDelay
+	serveStartupHealthTimeout = 1200 * time.Millisecond
+	serveStartRetryDelay = 10 * time.Millisecond
+	t.Cleanup(func() {
+		serveStartupHealthTimeout = oldTimeout
+		serveStartRetryDelay = oldDelay
+	})
+}
+
+func incrementHelperAttempt(path string) int {
+	if path == "" {
+		return 1
+	}
+	data, _ := os.ReadFile(path)
+	attempt, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+	attempt++
+	_ = os.WriteFile(path, []byte(strconv.Itoa(attempt)), 0o600)
+	return attempt
+}
+
+func readHelperAttemptCount(t *testing.T, path string) int {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read attempts: %v", err)
+	}
+	got, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		t.Fatalf("parse attempts %q: %v", string(data), err)
+	}
+	return got
+}
+
+func assertHelperPIDsExited(t *testing.T, path string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read pids: %v", err)
+	}
+	for _, line := range strings.Fields(string(data)) {
+		pid, err := strconv.Atoi(line)
+		if err != nil {
+			t.Fatalf("parse pid %q: %v", line, err)
+		}
+		if err := syscall.Kill(pid, 0); err == nil {
+			t.Fatalf("process %d is still running", pid)
+		}
 	}
 }
 
