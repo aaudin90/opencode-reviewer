@@ -28,6 +28,7 @@ const (
 	healthPollInterval = 500 * time.Millisecond
 	healthTimeout      = 30 * time.Second
 	healthBodyLimit    = 1024
+	serveStartAttempts = 3
 	stopGracePeriod    = 10 * time.Second
 	abortTimeout       = 5 * time.Second
 	maxRetries         = 3
@@ -39,6 +40,11 @@ const (
 	toolCallWaitTimeout = 3 * time.Second
 	precheckPrompt      = "Health check. Reply with exactly: OK\nDo not use tools. Do not add explanations or markdown."
 	defaultPrecheckSec  = 300
+)
+
+var (
+	serveStartupHealthTimeout = healthTimeout
+	serveStartRetryDelay      = 2 * time.Second
 )
 
 // Runner manages an opencode serve subprocess and HTTP interaction.
@@ -99,7 +105,46 @@ func (r *Runner) StartServe(ctx context.Context) error {
 	}
 
 	r.StopServe()
+	return r.startServeSubprocessWithRetries(ctx)
+}
 
+func (r *Runner) startServeSubprocessWithRetries(ctx context.Context) error {
+	var attemptErrs []error
+	for attempt := 1; attempt <= serveStartAttempts; attempt++ {
+		err := r.startServeSubprocessOnce(ctx, attempt)
+		if err == nil {
+			return nil
+		}
+
+		var healthErr *serveStartupHealthError
+		if !errors.As(err, &healthErr) || ctx.Err() != nil {
+			return err
+		}
+
+		attemptErrs = append(attemptErrs, err)
+		slog.Warn("opencode serve startup health failed",
+			"attempt", attempt,
+			"attempts", serveStartAttempts,
+			"error", err,
+		)
+
+		if attempt == serveStartAttempts {
+			return fmt.Errorf("opencode serve did not become healthy after %d attempts: %w", serveStartAttempts, errors.Join(attemptErrs...))
+		}
+
+		timer := time.NewTimer(serveStartRetryDelay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return fmt.Errorf("wait before retrying opencode serve startup: %w", ctx.Err())
+		case <-timer.C:
+		}
+	}
+
+	return fmt.Errorf("opencode serve did not become healthy after %d attempts", serveStartAttempts)
+}
+
+func (r *Runner) startServeSubprocessOnce(ctx context.Context, attempt int) error {
 	port, err := allocatePort(r.cfg.Port)
 	if err != nil {
 		return fmt.Errorf("allocate port: %w", err)
@@ -138,6 +183,8 @@ func (r *Runner) StartServe(ctx context.Context) error {
 		"binary", r.cfg.Binary,
 		"workDir", r.workDir,
 		"port", port,
+		"attempt", attempt,
+		"attempts", serveStartAttempts,
 		"print_logs", r.cfg.PrintLogs,
 		"log_level", r.cfg.LogLevel,
 		"log_path", r.logPath,
@@ -159,7 +206,7 @@ func (r *Runner) StartServe(ctx context.Context) error {
 		procDone <- waitErr
 	}()
 
-	healthCtx, cancel := context.WithTimeout(ctx, healthTimeout)
+	healthCtx, cancel := context.WithTimeout(ctx, serveStartupHealthTimeout)
 	defer cancel()
 
 	if err := r.waitHealthy(healthCtx, procDone); err != nil {
@@ -169,7 +216,7 @@ func (r *Runner) StartServe(ctx context.Context) error {
 			r.killAndWait(procDone)
 		}
 		r.proc = nil
-		return err
+		return &serveStartupHealthError{err: err}
 	}
 
 	slog.Info("opencode serve is healthy")
