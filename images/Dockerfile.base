@@ -16,7 +16,7 @@ FROM almalinux:9-minimal
 RUN microdnf install -y git ca-certificates tar net-tools && microdnf clean all
 
 ARG TARGETARCH
-ARG OPENCODE_VERSION=1.15.11
+ARG OPENCODE_VERSION=1.17.18
 ARG OPENCODE_WARMUP_MODEL
 RUN case "${TARGETARCH}" in \
     amd64) ARCH=x64 ;; \
