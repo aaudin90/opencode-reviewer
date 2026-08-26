@@ -7,4 +7,5 @@ type Config struct {
 	ConfigBaseDir                 string
 	CLIConfigDir                  string
 	DisableConfigDirAutoDiscovery bool
+	ProviderHeaders               map[string]string
 }

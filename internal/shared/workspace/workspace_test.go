@@ -1,7 +1,9 @@
 package workspace
 
 import (
+	"bytes"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -208,6 +210,35 @@ func TestNew_ModelOverrideWinsOverProviderJSON(t *testing.T) {
 	}
 	if parsed["model"] != "my-proxy/override" {
 		t.Fatalf("model = %v, want explicit override", parsed["model"])
+	}
+}
+
+func TestNew_DoesNotLogProviderConfig(t *testing.T) {
+	providerJSON := json.RawMessage(`{
+		"provider": {
+			"proxy": {
+				"options": {
+					"headers": {"X-Private-Metadata": "must-not-appear-in-logs"}
+				},
+				"models": {"model": {}}
+			}
+		},
+		"model": "proxy/model"
+	}`)
+
+	var logs bytes.Buffer
+	originalLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(originalLogger) })
+
+	ws, err := newReviewer(Config{ProviderJSON: providerJSON}, "Review code.")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer func() { _ = ws.Cleanup() }()
+
+	if strings.Contains(logs.String(), "must-not-appear-in-logs") {
+		t.Fatalf("provider header value leaked to logs: %s", logs.String())
 	}
 }
 

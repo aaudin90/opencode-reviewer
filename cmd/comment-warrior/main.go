@@ -14,18 +14,20 @@ import (
 	commentwarriorruntime "github.com/aaudin90/opencode-reviewer/internal/commentwarrior/runtime"
 	"github.com/aaudin90/opencode-reviewer/internal/shared/config"
 	"github.com/aaudin90/opencode-reviewer/internal/shared/git"
+	"github.com/aaudin90/opencode-reviewer/internal/shared/providerconfig"
 	gitlabvcs "github.com/aaudin90/opencode-reviewer/internal/shared/vcs/gitlab"
 )
 
 type CLI struct {
-	Config                        string `kong:"optional,type='path',placeholder='FILE',help='Path to TOML config file.'"`
-	ConfigDir                     string `kong:"optional,name='config-dir',type='path',placeholder='DIR',help='Path to config directory.'"`
-	Branch                        string `kong:"placeholder='BRANCH',help='Branch to checkout.'"`
-	MRIID                         int    `kong:"optional,name='mr-iid',help='GitLab merge request IID.'"`
-	DryRun                        bool   `kong:"optional,name='dry-run',help='Run agent but do not mutate GitLab.'"`
-	MaxDiscussions                int    `kong:"optional,name='max-discussions',default='0',help='Maximum discussions to process; 0 means no limit.'"`
-	DiscussionID                  string `kong:"optional,name='discussion-id',help='Process a single discussion ID.'"`
-	DisableConfigDirAutoDiscovery bool   `kong:"optional,name='disable-config-dir-auto-discovery',help='Disable .opencodereview auto-discovery.'"`
+	Config                        string   `kong:"optional,type='path',placeholder='FILE',help='Path to TOML config file.'"`
+	ConfigDir                     string   `kong:"optional,name='config-dir',type='path',placeholder='DIR',help='Path to config directory.'"`
+	Branch                        string   `kong:"placeholder='BRANCH',help='Branch to checkout.'"`
+	MRIID                         int      `kong:"optional,name='mr-iid',help='GitLab merge request IID.'"`
+	DryRun                        bool     `kong:"optional,name='dry-run',help='Run agent but do not mutate GitLab.'"`
+	MaxDiscussions                int      `kong:"optional,name='max-discussions',default='0',help='Maximum discussions to process; 0 means no limit.'"`
+	DiscussionID                  string   `kong:"optional,name='discussion-id',help='Process a single discussion ID.'"`
+	DisableConfigDirAutoDiscovery bool     `kong:"optional,name='disable-config-dir-auto-discovery',help='Disable .opencodereview auto-discovery.'"`
+	OpenCodeHeaders               []string `kong:"optional,name='opencode-header',placeholder='NAME=VALUE',sep='none',help='Add or override an OpenCode provider header. Repeat for multiple headers.'"`
 }
 
 func main() {
@@ -50,6 +52,10 @@ Config directory files:
   comment-warrior/sub-agents/*.md
   comment-warrior/tools/*.ts
 
+Provider header flags:
+  --opencode-header NAME=VALUE           Add or override a header in every provider from provider.json.
+                                         Repeat the flag to configure multiple headers. This option is CLI-only.
+
 Environment variables:
   OR_CONFIG_DIR                         Config directory used after checkout
   OR_DISABLE_CONFIG_DIR_AUTO_DISCOVERY  Disable .opencodereview auto-discovery (true/1)
@@ -66,13 +72,18 @@ Environment variables:
   OR_OPENCODE_LOG_DIR                   OpenCode log directory (default: opencode-review-logs)
 
 Priority (branch): --branch > OR_BRANCH > CI_MERGE_REQUEST_SOURCE_BRANCH_NAME > git.branch TOML.
-Priority (MR IID): --mr-iid > OR_COMMENT_WARRIOR_MR_IID > CI_MERGE_REQUEST_IID.`),
+Priority (MR IID): --mr-iid > OR_COMMENT_WARRIOR_MR_IID > CI_MERGE_REQUEST_IID.
+Priority (provider headers): --opencode-header overrides matching names from provider.json case-insensitively.`),
 	)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 	_, err = parser.Parse(os.Args[1:])
+	if err != nil {
+		parser.FatalIfErrorf(err)
+	}
+	providerHeaders, err := providerconfig.ParseHeaders(cli.OpenCodeHeaders)
 	if err != nil {
 		parser.FatalIfErrorf(err)
 	}
@@ -104,13 +115,13 @@ Priority (MR IID): --mr-iid > OR_COMMENT_WARRIOR_MR_IID > CI_MERGE_REQUEST_IID.`
 		slog.Error("GitLab url/token/project_id are required")
 		os.Exit(1)
 	}
-	if err := run(context.Background(), cfg, cli, configBaseDir, mrIID); err != nil {
+	if err := run(context.Background(), cfg, cli, configBaseDir, mrIID, providerHeaders); err != nil {
 		slog.Error("comment-warrior failed", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, cfg *config.Config, cli CLI, configBaseDir string, mrIID int) error {
+func run(ctx context.Context, cfg *config.Config, cli CLI, configBaseDir string, mrIID int, providerHeaders map[string]string) error {
 	projectDir, err := filepath.Abs(cfg.ProjectDir)
 	if err != nil {
 		return fmt.Errorf("resolve project dir: %w", err)
@@ -122,6 +133,7 @@ func run(ctx context.Context, cfg *config.Config, cli CLI, configBaseDir string,
 		ConfigBaseDir:                 configBaseDir,
 		CLIConfigDir:                  cli.ConfigDir,
 		DisableConfigDirAutoDiscovery: cli.DisableConfigDirAutoDiscovery || envBool("OR_DISABLE_CONFIG_DIR_AUTO_DISCOVERY"),
+		ProviderHeaders:               providerHeaders,
 	})
 	pipeline := commentwarrior.NewPipeline(commentwarrior.PipelineConfig{
 		ProjectDir:     projectDir,

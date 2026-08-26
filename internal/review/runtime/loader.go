@@ -66,6 +66,10 @@ func (l *Loader) LoadRuntime(_ context.Context) (*pipeline.RuntimeResources, err
 	if err != nil {
 		return nil, fmt.Errorf("load provider config: %w", err)
 	}
+	providerJSON, err = providerconfig.MergeHeaders(providerJSON, l.cfg.ProviderHeaders)
+	if err != nil {
+		return nil, fmt.Errorf("apply provider headers: %w", err)
+	}
 	providerModel, err := providerconfig.DefaultModel(providerJSON)
 	if err != nil {
 		return nil, fmt.Errorf("read provider model: %w", err)

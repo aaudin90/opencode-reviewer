@@ -2,10 +2,134 @@ package providerconfig
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestParseHeaders(t *testing.T) {
+	headers, err := ParseHeaders([]string{
+		"x-request-source=review-workflow",
+		"X-Request-Context=repository:example,task:123=attempt:2",
+		"X-REQUEST-SOURCE=other-workflow",
+	})
+	if err != nil {
+		t.Fatalf("ParseHeaders: %v", err)
+	}
+
+	want := map[string]string{
+		"X-Request-Source":  "other-workflow",
+		"X-Request-Context": "repository:example,task:123=attempt:2",
+	}
+	if !maps.Equal(headers, want) {
+		t.Fatalf("ParseHeaders = %v, want %v", headers, want)
+	}
+}
+
+func TestParseHeadersRejectsInvalidHTTPFields(t *testing.T) {
+	tests := []struct {
+		name string
+		spec string
+	}{
+		{name: "missing separator", spec: "X-Request-Source"},
+		{name: "empty name", spec: "=value"},
+		{name: "space in name", spec: "Bad Header=value"},
+		{name: "colon in name", spec: "Bad:Header=value"},
+		{name: "newline after name", spec: "X-Request-Source\n=value"},
+		{name: "newline in value", spec: "X-Request-Source=review\nworkflow"},
+		{name: "newline after value", spec: "X-Request-Source=review-workflow\n"},
+		{name: "carriage return in value", spec: "X-Request-Source=review\rworkflow"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := ParseHeaders([]string{tt.spec}); err == nil {
+				t.Fatalf("ParseHeaders(%q) succeeded, want error", tt.spec)
+			}
+		})
+	}
+}
+
+func TestParseHeadersDoesNotExposeInvalidValue(t *testing.T) {
+	const secret = "must-not-appear-in-errors"
+
+	_, err := ParseHeaders([]string{"X-Private-Metadata=" + secret + "\ncontinuation"})
+	if err == nil {
+		t.Fatal("ParseHeaders succeeded, want error")
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("ParseHeaders error exposes header value: %v", err)
+	}
+}
+
+func TestMergeHeadersAppliesToEveryProvider(t *testing.T) {
+	data := json.RawMessage(`{
+		"provider": {
+			"primary": {
+				"options": {
+					"baseURL": "https://proxy.example.com/v1",
+					"headers": {
+						"Authorization": "Bearer token",
+						"x-request-source": "old-source"
+					}
+				},
+				"models": {"model": {}}
+			},
+			"fallback": {
+				"models": {"model": {}}
+			}
+		},
+		"model": "primary/model"
+	}`)
+
+	merged, err := MergeHeaders(data, map[string]string{
+		"X-Request-Source":  "review-workflow",
+		"X-Request-Context": "repository:example,task:123",
+	})
+	if err != nil {
+		t.Fatalf("MergeHeaders: %v", err)
+	}
+
+	var generated map[string]any
+	if err := json.Unmarshal(merged, &generated); err != nil {
+		t.Fatalf("parse merged config: %v", err)
+	}
+	providers := generated["provider"].(map[string]any)
+	for _, providerName := range []string{"primary", "fallback"} {
+		provider := providers[providerName].(map[string]any)
+		options := provider["options"].(map[string]any)
+		headers := options["headers"].(map[string]any)
+
+		if headers["X-Request-Source"] != "review-workflow" {
+			t.Errorf("%s X-Request-Source = %v, want review-workflow", providerName, headers["X-Request-Source"])
+		}
+		if headers["X-Request-Context"] != "repository:example,task:123" {
+			t.Errorf("%s X-Request-Context = %v, want repository:example,task:123", providerName, headers["X-Request-Context"])
+		}
+	}
+
+	primary := providers["primary"].(map[string]any)
+	primaryOptions := primary["options"].(map[string]any)
+	primaryHeaders := primaryOptions["headers"].(map[string]any)
+	if primaryOptions["baseURL"] != "https://proxy.example.com/v1" {
+		t.Errorf("primary baseURL = %v, want preserved value", primaryOptions["baseURL"])
+	}
+	if primaryHeaders["Authorization"] != "Bearer token" {
+		t.Errorf("primary Authorization = %v, want preserved value", primaryHeaders["Authorization"])
+	}
+	if _, exists := primaryHeaders["x-request-source"]; exists {
+		t.Errorf("primary headers retain overridden casing: %v", primaryHeaders)
+	}
+}
+
+func TestMergeHeadersRequiresProviderConfig(t *testing.T) {
+	_, err := MergeHeaders(nil, map[string]string{"X-Request-Source": "review-workflow"})
+	if err == nil || !strings.Contains(err.Error(), "provider config") {
+		t.Fatalf("MergeHeaders error = %v, want missing provider config error", err)
+	}
+}
 
 func TestValidate_Valid(t *testing.T) {
 	data := json.RawMessage(`{

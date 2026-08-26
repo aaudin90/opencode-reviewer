@@ -174,6 +174,7 @@ Common flags:
 | `--config-dir DIR` | Use a config directory explicitly; files are read after checkout |
 | `--config FILE` | Use a TOML config explicitly |
 | `--branch BRANCH` | Branch to review; overrides `OR_BRANCH` and `git.branch` |
+| `--opencode-header NAME=VALUE` | Add or override a header for every OpenCode provider; repeatable |
 | `--review-dump FILE` | Save final review JSON for debugging |
 | `--fast-review FILE` | Replay a saved review JSON without running LLM stages |
 
@@ -184,11 +185,24 @@ Comment-warrior flags:
 | `--config FILE` | Use a TOML config explicitly |
 | `--config-dir DIR` | Use a config directory explicitly; files are read after checkout |
 | `--branch BRANCH` | Branch to checkout; priority is flag, `OR_BRANCH`, CI source branch, TOML |
+| `--opencode-header NAME=VALUE` | Add or override a header for every OpenCode provider; repeatable |
 | `--mr-iid IID` | GitLab merge request IID |
 | `--dry-run` | Build tasks and run the agent without GitLab mutations |
 | `--max-discussions N` | Limit processed discussions; `0` means no limit |
 | `--discussion-id ID` | Process one GitLab discussion |
 | `--disable-config-dir-auto-discovery` | Disable `.opencodereview` auto-discovery |
+
+`--opencode-header` is CLI-only and requires a `provider.json` configuration.
+Each occurrence is applied to every configured provider's `options.headers`.
+Unrelated provider headers are preserved; matching names are overridden
+case-insensitively. For example:
+
+```bash
+opencode-reviewer \
+  --branch my-feature-branch \
+  --opencode-header 'X-Request-Source=review-workflow' \
+  --opencode-header 'X-Request-Context=repository:example,task:123'
+```
 
 Common env vars:
 

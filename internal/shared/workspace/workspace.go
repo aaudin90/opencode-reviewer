@@ -110,7 +110,6 @@ func newWorkspace(cfg Config, spec AgentSpec) (*Workspace, error) {
 	slog.Debug("workspace created",
 		"dir", dir,
 		"config_path", configPath,
-		"config_content", string(configData),
 		"has_prompt", spec.Prompt != "",
 		"has_provider_json", len(cfg.ProviderJSON) > 0,
 		"sub_agents", len(cfg.SubAgents),

@@ -2,6 +2,7 @@ package reviewruntime
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -101,6 +102,71 @@ func TestLoaderIgnoresDeprecatedMessageEnvWhenConfigDirActive(t *testing.T) {
 	resources := loadRuntime(t, workDir)
 	if len(resources.Messages) != 1 || resources.Messages[0].Content != "config-dir message" {
 		t.Fatalf("messages = %v, want config-dir message", resources.Messages)
+	}
+}
+
+func TestLoaderAppliesProviderHeadersToReviewerAndFinalizer(t *testing.T) {
+	clearConfigEnv(t)
+
+	projectDir := t.TempDir()
+	configDir := t.TempDir()
+	writeFile(t, filepath.Join(configDir, "provider.json"), `{
+		"provider": {
+			"proxy": {
+				"models": {"model": {}}
+			}
+		},
+		"model": "proxy/model"
+	}`)
+
+	workspaceRoot := t.TempDir()
+	cacheHome := t.TempDir()
+	t.Setenv("TMPDIR", workspaceRoot)
+	t.Setenv("HOME", cacheHome)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(cacheHome, ".config"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(cacheHome, ".cache"))
+	t.Setenv("BUN_INSTALL_CACHE_DIR", filepath.Join(cacheHome, ".bun", "install", "cache"))
+
+	loader := New(Config{
+		AppConfig: &config.Config{
+			ProjectDir: projectDir,
+			OpenCode: config.OpenCodeConfig{
+				Endpoint: "http://127.0.0.1:1",
+			},
+		},
+		ConfigBaseDir:   ".",
+		CLIConfigDir:    configDir,
+		ProviderHeaders: map[string]string{"X-Request-Source": "review-workflow"},
+	})
+
+	resources, err := loader.LoadRuntime(context.Background())
+	if err != nil {
+		t.Fatalf("LoadRuntime: %v", err)
+	}
+	t.Cleanup(func() { _ = resources.Cleanup() })
+
+	configPaths, err := filepath.Glob(filepath.Join(workspaceRoot, "opencode-review-*", "opencode", "opencode.json"))
+	if err != nil {
+		t.Fatalf("glob opencode configs: %v", err)
+	}
+	if len(configPaths) != 2 {
+		t.Fatalf("generated config paths = %v, want reviewer and finalizer", configPaths)
+	}
+	for _, configPath := range configPaths {
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			t.Fatalf("read %s: %v", configPath, err)
+		}
+
+		var generated map[string]any
+		if err := json.Unmarshal(data, &generated); err != nil {
+			t.Fatalf("parse %s: %v", configPath, err)
+		}
+		provider := generated["provider"].(map[string]any)["proxy"].(map[string]any)
+		headers := provider["options"].(map[string]any)["headers"].(map[string]any)
+		if headers["X-Request-Source"] != "review-workflow" {
+			t.Errorf("%s X-Request-Source = %v, want review-workflow", configPath, headers["X-Request-Source"])
+		}
 	}
 }
 

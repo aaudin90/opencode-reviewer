@@ -14,17 +14,19 @@ import (
 	reviewruntime "github.com/aaudin90/opencode-reviewer/internal/review/runtime"
 	"github.com/aaudin90/opencode-reviewer/internal/shared/config"
 	"github.com/aaudin90/opencode-reviewer/internal/shared/git"
+	"github.com/aaudin90/opencode-reviewer/internal/shared/providerconfig"
 	"github.com/aaudin90/opencode-reviewer/internal/shared/vcs"
 	gitlabvcs "github.com/aaudin90/opencode-reviewer/internal/shared/vcs/gitlab"
 )
 
 type CLI struct {
-	Config                        string `kong:"optional,type='path',placeholder='FILE',help='Path to TOML config file. If omitted, config-dir defaults or environment fallbacks are used.'"`
-	ConfigDir                     string `kong:"optional,name='config-dir',type='path',placeholder='DIR',help='Path to config directory. If omitted, OR_CONFIG_DIR is used, then <project_dir or cwd>/.opencodereview auto-discovery after checkout.'"`
-	DisableConfigDirAutoDiscovery bool   `kong:"optional,name='disable-config-dir-auto-discovery',help='Disable only the fallback auto-discovery of <project_dir or cwd>/.opencodereview. --config-dir and OR_CONFIG_DIR still work.'"`
-	Branch                        string `kong:"placeholder='BRANCH',help='Branch to review (overrides OR_BRANCH env).'"`
-	ReviewDump                    string `kong:"optional,name='review-dump',type='path',placeholder='FILE',help='Save final review JSON to FILE (for fast-path debugging).'"`
-	FastReview                    string `kong:"optional,name='fast-review',type='path',placeholder='FILE',help='Skip LLM pipeline and load review from FILE (fast-path for debugging VCS).'"`
+	Config                        string   `kong:"optional,type='path',placeholder='FILE',help='Path to TOML config file. If omitted, config-dir defaults or environment fallbacks are used.'"`
+	ConfigDir                     string   `kong:"optional,name='config-dir',type='path',placeholder='DIR',help='Path to config directory. If omitted, OR_CONFIG_DIR is used, then <project_dir or cwd>/.opencodereview auto-discovery after checkout.'"`
+	DisableConfigDirAutoDiscovery bool     `kong:"optional,name='disable-config-dir-auto-discovery',help='Disable only the fallback auto-discovery of <project_dir or cwd>/.opencodereview. --config-dir and OR_CONFIG_DIR still work.'"`
+	Branch                        string   `kong:"placeholder='BRANCH',help='Branch to review (overrides OR_BRANCH env).'"`
+	ReviewDump                    string   `kong:"optional,name='review-dump',type='path',placeholder='FILE',help='Save final review JSON to FILE (for fast-path debugging).'"`
+	FastReview                    string   `kong:"optional,name='fast-review',type='path',placeholder='FILE',help='Skip LLM pipeline and load review from FILE (fast-path for debugging VCS).'"`
+	OpenCodeHeaders               []string `kong:"optional,name='opencode-header',placeholder='NAME=VALUE',sep='none',help='Add or override an OpenCode provider header. Repeat for multiple headers.'"`
 }
 
 func main() {
@@ -134,6 +136,11 @@ Config directory files:
 
 Built-in tools submit_review.ts and submit_final_review.ts are available without files.
 
+Provider header flags:
+  --opencode-header NAME=VALUE
+                        Add or override a header in every provider from provider.json.
+                        Repeat the flag to configure multiple headers. This option is CLI-only.
+
 Debug flags:
   --review-dump FILE    Save final review JSON to FILE after LLM pipeline (for replay with --fast-review).
   --fast-review FILE    Skip LLM pipeline and load review from FILE (fast-path for iterating on VCS publishing).
@@ -142,6 +149,7 @@ Debug flags:
 
 Priority (config directory):  --config-dir flag > OR_CONFIG_DIR env > <project_dir or cwd>/.opencodereview after checkout (if exists and auto-discovery is enabled).
 Priority (branch):            --branch flag > OR_BRANCH env > git.branch TOML.
+Priority (provider headers):  --opencode-header overrides matching names from provider.json case-insensitively.
 Priority (config files/prompts): config-dir files > TOML inline/path > deprecated OR_* env fallback (only when config-dir is inactive) > built-in default.`),
 	)
 	if err != nil {
@@ -150,6 +158,10 @@ Priority (config files/prompts): config-dir files > TOML inline/path > deprecate
 	}
 
 	_, err = parser.Parse(os.Args[1:])
+	if err != nil {
+		parser.FatalIfErrorf(err)
+	}
+	providerHeaders, err := providerconfig.ParseHeaders(cli.OpenCodeHeaders)
 	if err != nil {
 		parser.FatalIfErrorf(err)
 	}
@@ -180,7 +192,7 @@ Priority (config files/prompts): config-dir files > TOML inline/path > deprecate
 
 	initSlog()
 
-	if err := run(cfg, cli, configBaseDir); err != nil {
+	if err := run(cfg, cli, configBaseDir, providerHeaders); err != nil {
 		slog.Error("review failed", "error", err)
 		os.Exit(1)
 	}
@@ -201,7 +213,7 @@ func buildPublisher(cfg *config.Config) vcs.Publisher {
 	return gitlabvcs.NewPublisher(client, gl.ClearComments)
 }
 
-func run(cfg *config.Config, cli CLI, configBaseDir string) error {
+func run(cfg *config.Config, cli CLI, configBaseDir string, providerHeaders map[string]string) error {
 	projectDir, err := filepath.Abs(cfg.ProjectDir)
 	if err != nil {
 		return fmt.Errorf("resolve project dir: %w", err)
@@ -220,6 +232,7 @@ func run(cfg *config.Config, cli CLI, configBaseDir string) error {
 		ConfigBaseDir:                 configBaseDir,
 		CLIConfigDir:                  cli.ConfigDir,
 		DisableConfigDirAutoDiscovery: cli.DisableConfigDirAutoDiscovery || envBool("OR_DISABLE_CONFIG_DIR_AUTO_DISCOVERY"),
+		ProviderHeaders:               providerHeaders,
 	})
 
 	p := pipeline.New(pipeline.Config{
